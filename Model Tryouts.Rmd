@@ -1,0 +1,356 @@
+---
+title: "Model tryouts"
+author: "Wenwan Xu"
+date: "2026-10-14"
+output: 
+  html_document:
+    df_print: paged
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(corrplot)
+library(readr)
+```
+
+# BLS Model exploration
+
+read in data
+```{r}
+base <- read_csv("VBRescue_BLS_Shiny_download_only/bls_2026.csv", 
+                 col_types = cols(date = col_date(format = "%m/%d/%Y")))
+
+emts <- data.frame(date = base$date, bls_emts = base$bls_emts)
+```
+
+## linear regression
+```{r}
+base_df <- base[,-2]
+
+plot(base_df$bls_emts,type='l', xlab='month', ylab="Number of BLS EMTs", main="Number of BLS EMTs" )
+```
+curved pattern shown. We will try the log transformation first, and also try a polynomial regression later. 
+
+```{r}
+base_df$log_y <- log(base_df$bls_emts)
+plot(base_df$log_y,type='l', xlab='month', ylab="Log Number of BLS EMTs", main="Log Number of BLS EMTs" )
+```
+Not big improvement on curve pattern, but we will finish the linear model analysis with log transformation for now
+```{r}
+cor_matrix <- cor(base_df, use = "complete.obs")
+cor_matrix 
+```
+
+Based on the correlation and using a threshold of 0.6 absolute value, month, emt_students, ops_pending, and bls_interns are the top predictors that are highly correlated to bls_emts. 
+
+For Multicollinearity,
+```{r}
+cor_matrix1 <- cor(base_df, use = "complete.obs")
+cor_matrix1 
+corrplot(cor_matrix1, method = "color", col=COL2('RdBu'))
+```
+
+For multicollinearity issue: 
+- month with pending_academy, and testing
+- emt_students with pending_bls_interns, bls_interns, and ops_completions
+- ops_pending with bls_interns, and emt_students
+- bls_interns with emt_students, ops_pending, and ops_completion
+
+With the limited data points, we will use high correlation predictors only 
+
+```{r}
+library(leaps)
+lm_df <- base_df[,c(1, 5, 7, 17)]
+alllmreg <- regsubsets(log_y~., data = lm_df, nbest=2)
+
+# best R^2 adj.
+coef(alllmreg, which.max(summary(alllmreg)$adjr2))
+```
+```{r}
+#best Mallow's Cp
+coef(alllmreg, which.min(summary(alllmreg)$cp))
+```
+```{r}
+#best BIC
+coef(alllmreg, which.min(summary(alllmreg)$bic))
+```
+For all bests: month, emt_students, ops_pending
+
+```{r}
+emts_lm1 <- lm(formula = log_y ~ month+emt_students+ops_pending, data = lm_df) #log y
+summary(emts_lm1)
+
+par(mfrow = c(2, 2))
+plot(emts_lm1)
+```
+```{r}
+emts_lm1.1 <- lm(formula = bls_emts ~ month+emt_students+ops_pending, data = base_df) #original
+summary(emts_lm1.1)
+
+par(mfrow = c(2, 2))
+plot(emts_lm1.1)
+```
+bls_emts ~ month+emt_students+ops_pending seems to be the best combination of predictors if we want to do MLR (should we log the y for slightly better residual linearity?)
+
+
+## Polynomial regression
+
+Because we see a curved pattern, we want to try with the polynomial regression as well
+We will still use the previous combination of variables we found using regsubsets()
+
+```{r}
+plot(base_df$month, base_df$bls_emts)
+plot(base_df$emt_students, base_df$bls_emts)
+plot(base_df$ops_pending, base_df$bls_emts)
+```
+
+
+Month show pretty moderate curved pattern, so we will start from there
+
+```{r}
+emts_poly1 <- lm(bls_emts ~ poly(month, 2)+ ops_pending + emt_students, data = base_df) 
+summary(emts_poly1)
+
+par(mfrow = c(2, 2))
+plot(emts_poly1)
+```
+
+The polynomial regression does not perform well and the 2nd degree month predictor is not significant, so we will rule out this. 
+
+
+## Time Series
+```{r}
+plot(emts)
+
+l_emts <- log(emts$bls_emts) #stabilize variance
+emts_ts<-ts(l_emts,frequency=12,start=c(2026,1))
+plot(emts_ts,type='l', xlab='month', ylab="Log Number of BLS EMTs", main="Log Number of BLS EMTs" )
+points(emts_ts,pch=1,cex=0.6)
+
+```
+- We see a curved trend that generally positively growing. -> Gonna remove the positive trend using first difference so we isolate out seasonal trend
+
+```{r}
+emts_diff1 <- diff(emts_ts)
+
+plot(emts_diff1,type='l', xlab='year', 
+     ylab="diff", main="After diff1" ) #generally no trend now
+points(emts_diff1,pch=1,cex=0.7)
+lag.plot(emts_diff1, lags=6, do.lines=FALSE)
+```
+No clear seasonal trend shown as only lag 6 shows positive linear trend, while all other lag plots showing no clear positive trend. We will rule out any seasonal component for now since we don't have too much data point supporting it. 
+
+The data is generally stationary, with slightly funnel out trend for the variance. 
+```{r}
+acf(emts_diff1, main="ACF of Log EMTs (diff 2)")
+```
+No significant lags shown in the acf plot, so we probably don't want to use time series. 
+
+## KNN
+* I am going to do two combinations of predictors for KNN models. One would only take the month (act as generally ordering) and another takes the high correlation predictors we found in linear regression exploration
+
+Split data
+```{r}
+set.seed(2026)
+
+test <- base_df[9,]
+
+train_id <- sample(seq_len(nrow(base_df[-9,])), size = 5)
+
+train <- base_df[train_id, ]
+validate  <- base_df[-c(9,train_id), ]
+
+dim(train)
+```
+### Only Month
+subset data and standardize month
+```{r}
+train_m <- train[,c(1,9)]
+val_m <- validate[,c(1,9)]
+test_m <- test[,c(1,9)]
+
+train_center_m <- sapply(train_m[c("month")], mean)
+train_scale_m  <- sapply(train_m[c("month")], sd)
+
+standardize <- function(df, center, scale) {
+  x <- as.matrix(df[c("month")])
+  x <- sweep(x, 2, center, "-")
+  sweep(x, 2, scale, "/")
+}
+
+x_train_m <- standardize(train_m, train_center_m, train_scale_m)
+x_val_m <- standardize(val_m, train_center_m, train_scale_m)
+x_test_m  <- standardize(test_m, train_center_m, train_scale_m)
+
+```
+
+```{r}
+knn_reg_predict <- function(x_train, y_train, x_new, k) {
+  sapply(seq_len(nrow(x_new)), function(i) {
+    difference <- x_train - matrix(
+      x_new[i, ], nrow = nrow(x_train), ncol = ncol(x_train),
+      byrow = TRUE
+    )
+    distance_squared <- rowSums(difference^2)
+    neighbor_id <- order(distance_squared)[seq_len(k)]
+    mean(y_train[neighbor_id])
+  })
+}
+```
+
+```{r}
+mse <- function(actual, predicted) {
+  mean((actual - predicted)^2)
+}
+
+k_values <- c(1, 2, 3, 4, 5)
+
+results_m <- do.call(rbind, lapply(k_values, function(k) {
+  pred_train <- knn_reg_predict(x_train_m, train_m$bls_emts, x_train_m, k)
+  pred_validate  <- knn_reg_predict(x_train_m, train_m$bls_emts, x_val_m, k)
+
+  data.frame(
+    k = k,
+    training_mse = mse(train_m$bls_emts, pred_train),
+    validate_mse = mse(test_m$bls_emts, pred_validate)
+  )
+}))
+
+results_m
+```
+```{r}
+plot(results_m$k, results_m$training_mse,
+     type = "o", pch = 19, col = "gray40",
+     xlab = "K", ylab = "Mean squared error",
+     ylim = range(results_m[c("training_mse", "validate_mse")]))
+lines(results_m$k, results_m$validate_mse,
+      type = "o", pch = 19, col = "#0072B2")
+legend("topleft", c("Training MSE", "Validate MSE"),
+       col = c("gray40", "#0072B2"), pch = 19, lty = 1, bty = "n")
+```
+
+Seems like K=5 is the best shot with our current data if only use month as predictor.
+
+```{r}
+month_knn_pred <- data.frame(
+  original_y = val_m$bls_emts,
+  predicted_y = knn_reg_predict(x_train_m, train_m$bls_emts, x_val_m, k=5)
+)
+month_knn_pred
+```
+
+### Use lm_df
+```{r}
+train_lm <- train[,c(1, 5, 7, 9)]
+val_lm <- validate[,c(1, 5, 7, 9)]
+test_lm <- test[,c(1,5,7,9)]
+
+train_center_lm <- sapply(train_lm[,c(1:3)], mean)
+train_scale_lm  <- sapply(train_lm[,c(1:3)], sd)
+
+standardize <- function(df, center, scale) {
+  x <- as.matrix(df[,c(1:3)])
+  x <- sweep(x, 2, center, "-")
+  sweep(x, 2, scale, "/")
+}
+
+x_train_lm <- standardize(train_lm, train_center_lm, train_scale_lm)
+x_val_lm <- standardize(val_lm, train_center_lm, train_scale_lm)
+x_test_lm  <- standardize(test_lm, train_center_lm, train_scale_lm)
+```
+
+```{r}
+mse <- function(actual, predicted) {
+  mean((actual - predicted)^2)
+}
+
+k_values <- c(1, 2, 3, 4, 5)
+
+results_lm <- do.call(rbind, lapply(k_values, function(k) {
+  pred_train <- knn_reg_predict(x_train_lm, train_lm$bls_emts, x_train_lm, k)
+  pred_val  <- knn_reg_predict(x_train_lm, train_lm$bls_emts, x_val_lm, k)
+
+  data.frame(
+    k = k,
+    training_mse = mse(train_lm$bls_emts, pred_train),
+    validate_mse = mse(val_lm$bls_emts, pred_val)
+  )
+}))
+
+results_lm
+```
+```{r}
+plot(results_lm$k, results_lm$training_mse,
+     type = "o", pch = 19, col = "gray40",
+     xlab = "K", ylab = "Mean squared error",
+     ylim = range(results_lm[c("training_mse", "validate_mse")]))
+lines(results_lm$k, results_lm$validate_mse,
+      type = "o", pch = 19, col = "#0072B2")
+legend("topleft", c("Training MSE", "Validate MSE"),
+       col = c("gray40", "#0072B2"), pch = 19, lty = 1, bty = "n")
+```
+
+Seems like K=2 is the best for this combination of predictors (month + emt_students + ops_pending). 
+
+```{r}
+lm_knn_pred <- data.frame(
+  original_y = val_lm$bls_emts,
+  predicted_y = knn_reg_predict(x_train_lm, train_lm$bls_emts, x_val_lm, k=2)
+)
+lm_knn_pred
+```
+
+Comparing the two models on validate MSE, lm combination models perform better. 
+
+If using the whole development set:
+```{r}
+dev_lm <- base_df[-9,c(1, 5, 7, 9)]
+
+
+dev_center_lm <- sapply(dev_lm[,c(1:3)], mean)
+dev_scale_lm  <- sapply(dev_lm[,c(1:3)], sd)
+
+standardize <- function(df, center, scale) {
+  x <- as.matrix(df[,c(1:3)])
+  x <- sweep(x, 2, center, "-")
+  sweep(x, 2, scale, "/")
+}
+
+x_dev_lm <- standardize(dev_lm, train_center_lm, train_scale_lm)
+
+k_values <- c(1, 2, 3, 4, 5)
+
+results_dev <- do.call(rbind, lapply(k_values, function(k) {
+  pred_dev <- knn_reg_predict(x_dev_lm, dev_lm$bls_emts, x_dev_lm, k)
+  pred_test  <- knn_reg_predict(x_dev_lm, dev_lm$bls_emts, x_test_lm, k)
+
+  data.frame(
+    k = k,
+    training_mse = mse(dev_lm$bls_emts, pred_dev),
+    test_mse = mse(test_lm$bls_emts, pred_test)
+  )
+}))
+
+results_dev
+```
+
+```{r}
+plot(results_dev$k, results_dev$training_mse,
+     type = "o", pch = 19, col = "gray40",
+     xlab = "K", ylab = "Mean squared error",
+     ylim = range(results_dev[c("training_mse", "test_mse")]))
+lines(results_dev$k, results_dev$validate_mse,
+      type = "o", pch = 19, col = "#0072B2")
+legend("topleft", c("Training MSE", "Test MSE"),
+       col = c("gray40", "#0072B2"), pch = 19, lty = 1, bty = "n")
+```
+
+## Ridge/Lasso
+
+## 
+

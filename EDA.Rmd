@@ -1,0 +1,223 @@
+---
+title: "EDA"
+author: "Wenwan Xu"
+date: "2026-10-12"
+output: 
+  html_document:
+    df_print: paged
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_knit$set(root.dir = "C:/Users/xec9cp/OneDrive - University of Virginia/Desktop/BioKInd")
+#rmarkdown::render(
+#  "C:/Users/xec9cp/OneDrive - University of Virginia/Desktop/STAT 4993",
+#  output_dir = dirname("C:/Users/xec9cp/OneDrive - University of Virginia/Desktop/STAT 4993")
+#)
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(corrplot)
+```
+
+# EDA
+## Data import
+```{r}
+month_data <- read.csv("VBRescue_Month.csv")
+month_data <- month_data[is.na(month_data$Value)==FALSE,]
+month_data$Metric <- factor(month_data$Metric)
+month_data$Section <- factor(month_data$Section)
+month_data$Sub_Section <- factor(month_data$Sub_Section)
+month_data$Row_Type <- factor(month_data$Row_Type)
+
+```
+
+```{r}
+table(month_data$Section, month_data$Sub_Section)
+table(month_data$Section, month_data$Table)
+summary(month_data)
+```
+
+### Split data by each section or total type
+
+```{r}
+total <- month_data[month_data$Row_Type=="Total",]
+
+ambulance <- month_data[month_data$Section=="Ambulance (Primary Assignment)",]
+training <- month_data[month_data$Section=="Members in Training",]
+mpa <- month_data[month_data$Section=="Monthly Personnel Activity",]
+recruit <- month_data[month_data$Section=="Recruits",]
+spec_ops <- month_data[month_data$Section=="Special Operations (Primary Assignment)",]
+support <- month_data[month_data$Section=="Support and Administrative",]
+
+```
+
+```{r}
+ambulance_total <- ambulance[ambulance$Row_Type=="Total",]
+ambulance_detail <- ambulance[ambulance$Row_Type!="Total",]
+
+ggplot(ambulance_detail, aes(x = Month_Number, y = Value, colour = Metric)) +
+      geom_line() +
+      labs(
+        title = "Detailed breakdown of ambulance data",
+        x = "Months",
+        y = "numbers of members"
+      )
+
+ggplot(ambulance_total, aes(x = Month_Number, y = Value, colour = Metric)) +
+      geom_line() +
+      labs(
+        title = "Totals for ambulance data",
+        x = "Months",
+        y = "numbers of members"
+      )
+```
+```{r}
+mpa$Row_Type <- ifelse(grepl("Total", mpa$Metric), "Total", "Detail")
+
+mpa_exit <- mpa[mpa$Sub_Section=="Total Exits",]
+mpa_tot_exit <- aggregate(Value ~ Month_Number, data = mpa_exit, sum, na.rm = TRUE)
+mpa_tot_exit$Table <- "Monthly Personnel Activity"
+mpa_tot_exit$Section <- "Monthly Personnel Activity"
+mpa_tot_exit$Sub_Section <- "Total Exits"
+mpa_tot_exit$Metric <- "Total Exits"
+mpa_tot_exit$Row_Type <- "Total"
+
+mpa_new_qual <- mpa[grepl("Newly Qualified", mpa$Metric), ]
+mpa_tot_newqual <- aggregate(Value ~ Month_Number, data = mpa_new_qual, sum, na.rm = TRUE)
+mpa_tot_newqual$Table <- "Monthly Personnel Activity"
+mpa_tot_newqual$Section <- "Monthly Personnel Activity"
+mpa_tot_newqual$Sub_Section <- ""
+mpa_tot_newqual$Metric <- "Total Newly Qualified Members"
+mpa_tot_newqual$Row_Type <- "Total"
+
+mpa_total0 <- rbind(mpa_tot_exit, mpa_tot_newqual)
+
+mpa_total0$Month <- ifelse(mpa_total0$Month_Number==1, "January", 
+                          ifelse(mpa_total0$Month_Number==2, "February",
+                                 ifelse(mpa_total0$Month_Number==3, "March",
+                                        ifelse(mpa_total0$Month_Number==4, "April",
+                                               ifelse(mpa_total0$Month_Number==5, "May",
+                                                      ifelse(mpa_total0$Month_Number==6, "June",
+                                                             ifelse(mpa_total0$Month_Number==7, "July",
+                                                                    "August")))))))
+
+mpa_total <- mpa[grepl("Total", mpa$Metric),]
+mpa_total <- rbind(mpa_total, mpa_total0)
+
+mpa <- rbind(mpa, mpa_total0)
+```
+
+```{r}
+ggplot(mpa_exit, aes(x = Month_Number, y = Value, colour = Metric)) +
+      geom_line() +
+      labs(
+        title = "Exits - Monthly personnel activity data",
+        x = "Months",
+        y = "numbers of Exits"
+      )
+
+ggplot(mpa_new_qual, aes(x = Month_Number, y = Value, colour = Metric)) +
+      geom_line() +
+      labs(
+        title = "Newly Qualified - Monthly personnel activity data",
+        x = "Months",
+        y = "numbers of Members Newly Qualified"
+      )
+
+
+ggplot(mpa_total, aes(x = Month_Number, y = Value, colour = Metric)) +
+      geom_line() +
+      labs(
+        title = "Totals for Monthly personnel activity data",
+        x = "Months",
+        y = "numbers of members"
+      )
+```
+
+```{r}
+recruit_total <- recruit[recruit$Row_Type=="Total",]
+recruit_detail <- recruit[recruit$Row_Type!="Total",]
+
+ggplot(recruit_detail, aes(x = Month_Number, y = Value, colour = Metric)) +
+      geom_line() +
+      labs(
+        title = "Detailed breakdown of Recruits data",
+        x = "Months",
+        y = "numbers of members recruited"
+      )
+
+ggplot(recruit_total, aes(x = Month_Number, y = Value)) +
+      geom_col() +
+      labs(
+        title = "Detailed breakdown of Recruits data",
+        x = "Months",
+        y = "Total numbers of members recruited"
+      )
+```
+
+
+```{r}
+spec_ops_total <- spec_ops[spec_ops$Row_Type=="Total",]
+spec_ops_detail <- spec_ops[spec_ops$Row_Type!="Total",]
+
+ggplot(spec_ops_detail, aes(x = Month_Number, y = Value, colour = Metric)) +
+      geom_line() +
+      labs(
+        title = "Detailed breakdown of Special Operations data",
+        x = "Months",
+        y = "numbers of members"
+      )
+
+ggplot(spec_ops_total, aes(x = Month_Number, y = Value)) +
+      geom_col() +
+      labs(
+        title = "Detailed breakdown of Special Operations data",
+        x = "Months",
+        y = "Total numbers of members"
+      )
+```
+
+```{r}
+support_total <- support[support$Row_Type=="Total",]
+support_detail <- support[support$Row_Type!="Total",]
+
+ggplot(support_detail, aes(x = Month_Number, y = Value, colour = Metric)) +
+      geom_line() +
+      labs(
+        title = "Detailed breakdown of Support and Administration",
+        x = "Months",
+        y = "numbers of members"
+      )
+
+ggplot(support_total, aes(x = Month_Number, y = Value)) +
+      geom_col() +
+      labs(
+        title = "Detailed breakdown of Support and Administration",
+        x = "Months",
+        y = "Total numbers of members"
+      )
+```
+```{r}
+training_total <- training[training$Row_Type=="Total",]
+training_detail <- training[training$Row_Type!="Total",]
+
+ggplot(training_detail, aes(x = Month_Number, y = Value, colour = Metric)) +
+      geom_line() +
+      labs(
+        title = "Detailed breakdown of training data",
+        x = "Months",
+        y = "numbers of members"
+      )
+
+ggplot(training_total, aes(x = Month_Number, y = Value)) +
+      geom_col() +
+      labs(
+        title = "Detailed breakdown of training data",
+        x = "Months",
+        y = "Total numbers of members"
+      )
+```
