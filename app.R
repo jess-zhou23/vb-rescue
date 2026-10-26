@@ -61,7 +61,9 @@ ui <- fluidPage(
                              p(class='note','Leave blank to infer departures from 2026 new-BLS counts minus observed membership growth. This is not a measured attrition rate.'),
                              numericInput('pipeline_lag','Pipeline delay to new AICs (months)',6,min=0,max=36),
                              tags$hr(),h4('Update membership data'),
-                             fileInput('upload','Upload monthly CSV',accept='.csv'),
+                             uiOutput('csv_upload_ui'),
+                             uiOutput('csv_status_ui'),
+                             uiOutput('remove_csv_ui'),
                              downloadButton('template','CSV template'),downloadButton('export','Export projections')),
                 mainPanel(width=9,
                           fluidRow(column(4,div(class='metric',strong('Latest Active BLS Providers'),h2(textOutput('current',inline=TRUE)))),
@@ -100,22 +102,119 @@ server <- function(input,output,session){
     updateNumericInput(session, 'pipeline_lag', value = 6)
   })
   
-  data <- reactive({
-    d<-base
-    if(!is.null(input$upload)){
-      u<-tryCatch(read.csv(input$upload$datapath),error=function(e)NULL)
-      if(!is.null(u)&&all(c('date','bls_emts','new_bls')%in%names(u))){
-        u$date<-parse_dates(u$date)
-        u<-u[!is.na(u$date)&!is.na(u$bls_emts)&!is.na(u$new_bls),,drop=FALSE]
-        if(nrow(u)){
-          for(k in setdiff(names(d),names(u)))u[[k]]<-NA_real_
-          u<-u[,names(d),drop=FALSE]
-          d<-bind_rows(d[!d$date%in%u$date,],u)|>arrange(date)
-        }
-      }
-    }
-    d|>arrange(date)
+  # CSV upload: validate first, then use only accepted data.
+  uploaded_data <- reactiveVal(NULL)
+  upload_version <- reactiveVal(0L)
+  
+  output$csv_upload_ui <- renderUI({
+    fileInput(
+      paste0('upload_', upload_version()),
+      'Upload monthly CSV',
+      accept = '.csv'
+    )
   })
+  
+  observe({
+    # A new input ID is used after removal, so the old selection is cleared.
+    upload <- input[[paste0('upload_', upload_version())]]
+    req(upload)
+    
+    required_cols <- c('date', 'bls_emts', 'new_bls')
+    u <- tryCatch(
+      read.csv(upload$datapath, stringsAsFactors = FALSE),
+      error = function(e) NULL
+    )
+    
+    if (!grepl('\\.csv$', upload$name, ignore.case = TRUE) ||
+        is.null(u) || !all(required_cols %in% names(u))) {
+      uploaded_data(NULL)
+      showNotification(
+        'Invalid CSV. Required columns: date, bls_emts, new_bls.',
+        type = 'error', duration = 8
+      )
+      return()
+    }
+    
+    u$date <- parse_dates(u$date)
+    u$bls_emts <- suppressWarnings(as.numeric(u$bls_emts))
+    u$new_bls <- suppressWarnings(as.numeric(u$new_bls))
+    
+    valid_rows <- !is.na(u$date) &
+      is.finite(u$bls_emts) & is.finite(u$new_bls) &
+      u$bls_emts >= 0 & u$new_bls >= 0 &
+      u$bls_emts == floor(u$bls_emts) &
+      u$new_bls == floor(u$new_bls)
+    
+    if (nrow(u) == 0 || !all(valid_rows) || anyDuplicated(u$date) > 0) {
+      uploaded_data(NULL)
+      showNotification(
+        paste('Invalid CSV. Dates must be valid and unique;',
+              'bls_emts and new_bls must be nonnegative whole numbers.',
+              'Dates: YYYY-MM-DD or MM/DD/YYYY.'),
+        type = 'error', duration = 8
+      )
+      return()
+    }
+    
+    # Other fields in the baseline dataset are optional numeric counts.
+    optional_cols <- setdiff(names(base), required_cols)
+    for (col in intersect(optional_cols, names(u))) {
+      raw <- u[[col]]
+      converted <- suppressWarnings(as.numeric(raw))
+      invalid <- !is.na(raw) & trimws(as.character(raw)) != '' &
+        !is.finite(converted)
+      if (any(invalid)) {
+        uploaded_data(NULL)
+        showNotification(
+          paste('Invalid CSV. Optional column', col, 'must contain numeric values.'),
+          type = 'error', duration = 8
+        )
+        return()
+      }
+      u[[col]] <- converted
+    }
+    
+    uploaded_data(u)
+    showNotification('Upload complete', type = 'message', duration = 4)
+  })
+  
+  output$csv_status_ui <- renderUI({
+    if (is.null(uploaded_data())) {
+      p(class = 'note', 'Using original baseline dataset')
+    } else {
+      tags$p(
+        style = 'color: #198754; font-weight: bold;',
+        icon('check-circle'), ' Upload complete'
+      )
+    }
+  })
+  
+  output$remove_csv_ui <- renderUI({
+    req(uploaded_data())
+    actionButton('remove_csv', 'Remove uploaded CSV',
+                 icon = icon('trash'), class = 'btn-warning')
+  })
+  
+  observeEvent(input$remove_csv, {
+    uploaded_data(NULL)
+    upload_version(upload_version() + 1L)
+    showNotification('Uploaded CSV removed. Baseline restored.',
+                     type = 'message', duration = 4)
+  })
+  
+  data <- reactive({
+    d <- base
+    u <- uploaded_data()
+    if (!is.null(u)) {
+      for (col in setdiff(names(d), names(u))) {
+        u[[col]] <- NA_real_
+      }
+      u <- u[, names(d), drop = FALSE]
+      d <- bind_rows(d[!d$date %in% u$date, ], u)
+    }
+    d |> arrange(date)
+  })
+  
   model <- reactive({
     d<-data()|>filter(!is.na(bls_emts))|>arrange(date)
     validate(need(nrow(d)>=2,'At least two membership observations required'))
