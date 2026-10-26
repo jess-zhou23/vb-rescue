@@ -194,3 +194,4 @@ server <- function(input,output,session){
   output$export<-downloadHandler(filename=function()'bls_funnel_forecast.csv',content=function(file){write.csv(model()$f,file,row.names=FALSE)})
 }
 shinyApp(ui,server)
+
