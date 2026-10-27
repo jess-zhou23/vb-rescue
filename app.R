@@ -6,8 +6,19 @@ library(lubridate)
 library(DT)
 library(plotly)
 
+# Robust date parser: accepts ISO (2026-09-01, 2026/09/01) and US month/day/year (9/1/2026).
+# Anything unparseable or implausible (before year 2000) becomes NA and is dropped downstream.
+parse_dates <- function(x){
+  x <- trimws(as.character(x))
+  iso <- grepl('^[0-9]{4}[-/][0-9]{1,2}[-/][0-9]{1,2}', x)
+  out <- as.Date(rep(NA_character_, length(x)))
+  out[iso] <- as.Date(gsub('/', '-', x[iso]), format='%Y-%m-%d')
+  out[!iso] <- as.Date(x[!iso], format='%m/%d/%Y')
+  out[!is.na(out) & out < as.Date('2000-01-01')] <- NA
+  out
+}
 base <- read.csv('bls_2026.csv', stringsAsFactors=FALSE)
-base$date <- as.Date(base$date)
+base$date <- parse_dates(base$date)
 # These are annual cross-sectional ratios, not confirmed same-cohort probabilities.
 ref <- list(applications=1229, approved=408, graduates=161, aics=101,
             academy_sessions=6, seats_per_session=60,
@@ -29,24 +40,36 @@ ui <- fluidPage(
                              selectInput('baseline','Trend benchmark method',c('Linear regression'='linear','Endpoint average change'='change')),
                              tags$hr(),h4('Recruitment funnel scenario'),
                              p(class='note','Sliders adjust the 2025 annual ratios. 100% means no improvement from baseline.'),
-                             sliderInput('application_mult','Application approval/progression (% of baseline)',50,200,100,step=5,post='%'),
-                             sliderInput('academy_mult','Academy graduation (% of baseline)',50,200,100,step=5,post='%'),
-                             sliderInput('intern_mult','Graduate-to-AIC yield (% of baseline)',50,200,100,step=5,post='%'),
+                             fluidRow(
+                               column(10, sliderInput('application_mult','Application approval/progression (% of baseline)',50,200,100,step=5,post='%')),
+                               column(2, actionButton('reset_application', '↻', class = 'btn-sm'))
+                             ),
+                             fluidRow(
+                               column(10, sliderInput('academy_mult','Academy graduation (% of baseline)',50,200,100,step=5,post='%')),
+                               column(2, actionButton('reset_academy', '↻', class = 'btn-sm'))
+                             ),
+                             fluidRow(
+                               column(10, sliderInput('intern_mult','Graduate-to-AIC yield (% of baseline)',50,200,100,step=5,post='%')),
+                               column(2, actionButton('reset_intern', '↻', class = 'btn-sm'))
+                             ),
                              numericInput('applications','Applications per year',1229,min=0,step=25),
                              numericInput('sessions','Academies per year',6,min=0,max=12,step=1),
                              numericInput('seats','Seats per academy',60,min=0,max=200,step=5),
                              numericInput('seat_utilization','Usable seat capacity (%)',100,min=0,max=100,step=5),
+                             actionButton('reset_scenario','Reset entire scenario'),
                              tags$hr(),h4('Workforce & timing'),
                              numericInput('annual_exits','Assumed active BLS departures per year',NA,min=0,step=1),
                              p(class='note','Leave blank to infer departures from 2026 new-BLS counts minus observed membership growth. This is not a measured attrition rate.'),
                              numericInput('pipeline_lag','Pipeline delay to new AICs (months)',6,min=0,max=36),
                              tags$hr(),h4('Update membership data'),
-                             fileInput('upload','Upload monthly CSV',accept='.csv'),
+                             uiOutput('csv_upload_ui'),
+                             uiOutput('csv_status_ui'),
+                             uiOutput('remove_csv_ui'),
                              downloadButton('template','CSV template'),downloadButton('export','Export projections')),
                 mainPanel(width=9,
-                          fluidRow(column(4,div(class='metric',strong('Latest active BLS proxy'),h2(textOutput('current',inline=TRUE)))),
-                                   column(4,div(class='metric',strong('2026 trend target date'),h2(textOutput('trend_eta',inline=TRUE)))),
-                                   column(4,div(class='metric',strong('Funnel scenario target date'),h2(textOutput('scenario_eta',inline=TRUE))))),
+                          fluidRow(column(4,div(class='metric',strong('Latest Active BLS Providers'),h2(textOutput('current',inline=TRUE)))),
+                                   column(4,div(class='metric',strong('Status Quo Trend Target Date'),h2(textOutput('trend_eta',inline=TRUE)))),
+                                   column(4,div(class='metric',strong('Funnel Scenario Target Date'),h2(textOutput('scenario_eta',inline=TRUE))))),
                           tabsetPanel(
                             tabPanel('Forecast',plotOutput('forecast',height='410px'),tableOutput('comparison'),p(class='note','Funnel forecasts are scenario calculations, not statistical prediction intervals. The 2025 ratios may mix recruitment cohorts.')),
                             tabPanel('2026 trends',
@@ -63,44 +86,144 @@ ui <- fluidPage(
                 ))
 )
 server <- function(input,output,session){
-  # ---- Upload: read the CSV, tell the user what happened, then merge into data() ----
-  uploaded <- reactiveVal(NULL)
-  observeEvent(input$upload,{
-    # UTF-8-BOM handles CSVs saved from Excel; names are cleaned so 'Date ' still matches 'date'
-    u<-tryCatch(read.csv(input$upload$datapath,stringsAsFactors=FALSE,check.names=FALSE,fileEncoding='UTF-8-BOM'),
-                error=function(e)NULL)
-    if(is.null(u)){showNotification('Could not read that file. Make sure it is saved as a .csv.',type='error',duration=NULL);return()}
-    names(u)<-tolower(trimws(names(u)))
-    need_cols<-c('date','bls_emts','new_bls')
-    if(!all(need_cols%in%names(u))){
-      showNotification(paste('Upload ignored: the file is missing',paste(setdiff(need_cols,names(u)),collapse=', '),
-                             '. Start from the CSV template button.'),type='error',duration=NULL);return()}
-    # Accepts 2026-09-01 as well as Excel-style 9/1/2026 or 9/1/26
-    u$date<-as.Date(parse_date_time(as.character(u$date),orders=c('Ymd','mdY','mdy'),quiet=TRUE))
-    for(k in intersect(names(u),setdiff(names(base),'date')))u[[k]]<-suppressWarnings(as.numeric(u[[k]]))
-    u<-u[!is.na(u$date)&!is.na(u$bls_emts)&!is.na(u$new_bls),,drop=FALSE]
-    if(!nrow(u)){showNotification('Upload ignored: no rows had a readable date plus bls_emts and new_bls filled in.',type='error',duration=NULL);return()}
-    uploaded(u)
-    replaced<-sum(u$date%in%base$date)
-    msg<-paste0('Loaded ',nrow(u),' month(s): ',paste(format(sort(u$date),'%b %Y'),collapse=', '),'.')
-    if(replaced)msg<-paste0(msg,' ',replaced,' of them were already in the app and were replaced with the uploaded numbers.')
-    blank<-setdiff(setdiff(names(base),c('month','date')),names(u))
-    if(length(blank))msg<-paste0(msg,' These columns were not in the file, so months already in the app keep their old numbers and new months are left blank: ',paste(blank,collapse=', '),'. Use the CSV template button to get every column.')
-    showNotification(msg,type=if(length(blank))'warning' else 'message',duration=NULL)
+  
+  observeEvent(input$reset_application, {
+    updateSliderInput(session, 'application_mult', value = 100)
   })
-  data <- reactive({
-    d<-base
-    u<-uploaded()
-    if(!is.null(u)){
-      for(k in setdiff(names(d),names(u)))u[[k]]<-NA_real_
-      u<-u[,names(d),drop=FALSE]
-      # For months already in the app, keep the existing number wherever the upload leaves a column out or blank
-      old<-d[match(u$date,d$date),,drop=FALSE]
-      for(k in setdiff(names(d),'date'))u[[k]]<-ifelse(is.na(u[[k]]),old[[k]],u[[k]])
-      d<-bind_rows(d[!d$date%in%u$date,],u)
+  
+  observeEvent(input$reset_academy, {
+    updateSliderInput(session, 'academy_mult', value = 100)
+  })
+  
+  observeEvent(input$reset_intern, {
+    updateSliderInput(session, 'intern_mult', value = 100)
+  })
+  
+  observeEvent(input$reset_scenario, {
+    updateSliderInput(session, 'application_mult', value = 100)
+    updateSliderInput(session, 'academy_mult', value = 100)
+    updateSliderInput(session, 'intern_mult', value = 100)
+    
+    updateNumericInput(session, 'applications', value = 1229)
+    updateNumericInput(session, 'sessions', value = 6)
+    updateNumericInput(session, 'seats', value = 60)
+    updateNumericInput(session, 'seat_utilization', value = 100)
+    updateNumericInput(session, 'pipeline_lag', value = 6)
+  })
+  
+  # CSV upload: validate first, then use only accepted data.
+  uploaded_data <- reactiveVal(NULL)
+  upload_version <- reactiveVal(0L)
+  
+  output$csv_upload_ui <- renderUI({
+    fileInput(
+      paste0('upload_', upload_version()),
+      'Upload monthly CSV',
+      accept = '.csv'
+    )
+  })
+  
+  observe({
+    # A new input ID is used after removal, so the old selection is cleared.
+    upload <- input[[paste0('upload_', upload_version())]]
+    req(upload)
+    
+    required_cols <- c('date', 'bls_emts', 'new_bls')
+    u <- tryCatch(
+      read.csv(upload$datapath, stringsAsFactors = FALSE),
+      error = function(e) NULL
+    )
+    
+    if (!grepl('\\.csv$', upload$name, ignore.case = TRUE) ||
+        is.null(u) || !all(required_cols %in% names(u))) {
+      uploaded_data(NULL)
+      showNotification(
+        'Invalid CSV. Required columns: date, bls_emts, new_bls.',
+        type = 'error', duration = 8
+      )
+      return()
     }
-    d|>arrange(date)
+    
+    u$date <- parse_dates(u$date)
+    u$bls_emts <- suppressWarnings(as.numeric(u$bls_emts))
+    u$new_bls <- suppressWarnings(as.numeric(u$new_bls))
+    
+    valid_rows <- !is.na(u$date) &
+      is.finite(u$bls_emts) & is.finite(u$new_bls) &
+      u$bls_emts >= 0 & u$new_bls >= 0 &
+      u$bls_emts == floor(u$bls_emts) &
+      u$new_bls == floor(u$new_bls)
+    
+    if (nrow(u) == 0 || !all(valid_rows) || anyDuplicated(u$date) > 0) {
+      uploaded_data(NULL)
+      showNotification(
+        paste('Invalid CSV. Dates must be valid and unique;',
+              'bls_emts and new_bls must be nonnegative whole numbers.',
+              'Dates: YYYY-MM-DD or MM/DD/YYYY.'),
+        type = 'error', duration = 8
+      )
+      return()
+    }
+    
+    # Other fields in the baseline dataset are optional numeric counts.
+    optional_cols <- setdiff(names(base), required_cols)
+    for (col in intersect(optional_cols, names(u))) {
+      raw <- u[[col]]
+      converted <- suppressWarnings(as.numeric(raw))
+      invalid <- !is.na(raw) & trimws(as.character(raw)) != '' &
+        !is.finite(converted)
+      if (any(invalid)) {
+        uploaded_data(NULL)
+        showNotification(
+          paste('Invalid CSV. Optional column', col, 'must contain numeric values.'),
+          type = 'error', duration = 8
+        )
+        return()
+      }
+      u[[col]] <- converted
+    }
+    
+    uploaded_data(u)
+    showNotification('Upload complete', type = 'message', duration = 4)
   })
+  
+  output$csv_status_ui <- renderUI({
+    if (is.null(uploaded_data())) {
+      p(class = 'note', 'Using original baseline dataset')
+    } else {
+      tags$p(
+        style = 'color: #198754; font-weight: bold;',
+        icon('check-circle'), ' Upload complete'
+      )
+    }
+  })
+  
+  output$remove_csv_ui <- renderUI({
+    req(uploaded_data())
+    actionButton('remove_csv', 'Remove uploaded CSV',
+                 icon = icon('trash'), class = 'btn-warning')
+  })
+  
+  observeEvent(input$remove_csv, {
+    uploaded_data(NULL)
+    upload_version(upload_version() + 1L)
+    showNotification('Uploaded CSV removed. Baseline restored.',
+                     type = 'message', duration = 4)
+  })
+  
+  data <- reactive({
+    d <- base
+    u <- uploaded_data()
+    if (!is.null(u)) {
+      for (col in setdiff(names(d), names(u))) {
+        u[[col]] <- NA_real_
+      }
+      u <- u[, names(d), drop = FALSE]
+      d <- bind_rows(d[!d$date %in% u$date, ], u)
+    }
+    d |> arrange(date)
+  })
+  
   model <- reactive({
     d<-data()|>filter(!is.na(bls_emts))|>arrange(date)
     validate(need(nrow(d)>=2,'At least two membership observations required'))
