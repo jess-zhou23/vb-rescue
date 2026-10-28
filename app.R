@@ -4,6 +4,7 @@ library(dplyr)
 library(tidyr)
 library(lubridate)
 library(DT)
+library(plotly)
 
 # Robust date parser: accepts ISO (2026-09-01, 2026/09/01) and US month/day/year (9/1/2026).
 # Anything unparseable or implausible (before year 2000) becomes NA and is dropped downstream.
@@ -71,7 +72,15 @@ ui <- fluidPage(
                                    column(4,div(class='metric',strong('Funnel Scenario Target Date'),h2(textOutput('scenario_eta',inline=TRUE))))),
                           tabsetPanel(
                             tabPanel('Forecast',plotOutput('forecast',height='410px'),tableOutput('comparison'),p(class='note','Funnel forecasts are scenario calculations, not statistical prediction intervals. The 2025 ratios may mix recruitment cohorts.')),
-                            tabPanel('2026 trends',plotOutput('trends',height='440px'),selectInput('stage','Explore a membership or pipeline measure',choices=setNames(names(labels),unname(labels)),selected='bls_emts'),plotOutput('stageplot',height='290px')),
+                            tabPanel('2026 trends',
+                                     plotlyOutput('g_goal',height='330px'),
+                                     plotlyOutput('g_snapshot',height='300px'),
+                                     plotlyOutput('g_funnel',height='330px'),
+                                     p(class='note','Year-to-date totals. Not the same people moving through: someone graduating now may have applied last year. Approved includes all tracks, not only BLS.'),
+                                     plotlyOutput('g_flow',height='330px'),
+                                     p(class='note','Exits include a few ALS volunteers, so the BLS-only number is slightly lower.'),
+                                     plotlyOutput('g_losses',height='300px'),
+                                     tags$hr(),selectInput('stage','Explore a membership or pipeline measure',choices=setNames(names(labels),unname(labels)),selected='bls_emts'),plotlyOutput('stageplot',height='290px')),
                             tabPanel('2025 funnel & assumptions',h4('Historical 2025 funnel'),tableOutput('funnel_table'),h4('2025 reported pipeline losses'),p('47 approved applicants, 105 academy students or testing candidates, and 45 interns were lost from the recruitment pipeline. These are NOT active BLS workforce exits, and are not subtracted from membership. They may overlap with the funnel ratios.'),h4('Scenario calculation'),verbatimTextOutput('math_summary'),p(class='note','Annual counts are ratios of annual totals, not verified same-cohort conversion probabilities. Academy seat capacity is an upper bound, not a target. Application and graduation totals may contain non-BLS candidates; verify with the client before interpreting this as a BLS-only pipeline.'),h4('2026 source data'),DTOutput('source'))
                           )
                 ))
@@ -286,11 +295,110 @@ server <- function(input,output,session){
     'Projected membership at month h = 2026 trend forecast + (annual increment / 12) x max(0, h - ',m$lag,').\n',
     '2026 implied active departures = ',round(m$inferred_exits,1),'/year; user assumption = ',round(m$exits,1),'/year. These are shown for context only and do NOT alter the calibrated forecast.\n',
     'Important: the annual funnel rates are not cohort-verified, and graduation/AIC populations may not be strictly BLS-only.')})
-  output$trends<-renderPlot({d<-data();p<-d|>select(date,bls_emts,new_bls,bls_interns,testing)|>pivot_longer(-date,names_to='series',values_to='count');ggplot(p,aes(date,count,color=series))+geom_line(linewidth=1)+geom_point()+facet_wrap(~series,scales='free_y',ncol=2,labeller=as_labeller(labels))+scale_color_manual(values=c(bls_emts='#e8796d',bls_interns='#83a928',new_bls='#5ab6bf',testing='#b67af0'))+theme_minimal(base_size=12)+theme(legend.position='none',strip.text=element_text(face='bold',size=11))+labs(x=NULL,y='Monthly reported count')})
-  output$stageplot<-renderPlot({req(input$stage);validate(need(input$stage %in% names(labels),'Select a valid series'));ggplot(data(),aes(date,.data[[input$stage]]))+geom_line(color='#176b79',linewidth=1.2)+geom_point(color='#176b79',size=2)+theme_minimal(base_size=12)+labs(title=unname(labels[[input$stage]]),x=NULL,y='Reported count')})
+  # ---- 2026 trends tab: these all use data(), so they update when new months are uploaded ----
+  # Only the latest year in the data, so year-to-date totals don't mix years
+  trend_data <- reactive({
+    d <- data()
+    d %>% filter(year(date) == year(max(date)))
+  })
+  months_axis <- scale_x_date(date_breaks = '1 month', date_labels = '%b')
+  
+  # Turns a ggplot into an interactive chart: bold title, and the number shows when you hover
+  hover <- function(p, title) {
+    ggplotly(p, tooltip = 'text') %>%
+      layout(title = list(text = paste0('<b>', title, '</b>'), x = 0.01, font = list(size = 20)),
+             margin = list(t = 60),
+             legend = list(orientation = 'h', x = 0.35, y = -0.12)) %>%
+      config(displayModeBar = FALSE)
+  }
+  
+  # 1. EMTs vs goal
+  output$g_goal <- renderPlotly({
+    d <- trend_data() %>% filter(!is.na(bls_emts))
+    d$tip <- paste0(format(d$date, '%B'), ': ', d$bls_emts, ' EMTs')
+    p <- ggplot(d, aes(date, bls_emts, text = tip, group = 1)) +
+      geom_hline(yintercept = input$target, colour = 'red', linetype = 'dashed') +
+      annotate('text', x = min(d$date), y = input$target + 2, label = paste('Goal:', input$target),
+               colour = 'red', hjust = 0) +
+      geom_line() +
+      geom_point(size = 2) +
+      geom_text(aes(y = bls_emts + 3.5, label = bls_emts), size = 3.5) +
+      months_axis +
+      expand_limits(y = c(min(d$bls_emts) - 5, input$target + 5)) +
+      labs(x = NULL, y = 'EMT AICs')
+    hover(p, paste('EMTs vs goal of', input$target))
+  })
+  
+  # 2. Where everyone is right now (latest month)
+  output$g_snapshot <- renderPlotly({
+    r <- trend_data() %>% filter(!is.na(bls_emts)) %>% filter(date == max(date))
+    s <- data.frame(stage = c('In academy or testing', 'BLS interns', 'Released EMTs'),
+                    value = c(r$emt_students + r$testing, r$bls_interns, r$bls_emts))
+    s$stage <- factor(s$stage, levels = s$stage)
+    s$tip <- paste0(s$stage, ': ', s$value, ' people')
+    p <- ggplot(s, aes(stage, value, text = tip)) +
+      geom_col(fill = 'steelblue', width = 0.6) +
+      geom_text(aes(y = value + max(value, na.rm = TRUE) * 0.05, label = value), size = 4.5) +
+      scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+      labs(x = NULL, y = 'People')
+    hover(p, paste('Where members are in', format(r$date, '%B')))
+  })
+  
+  # 3. Pipeline (year to date)
+  output$g_funnel <- renderPlotly({
+    d <- trend_data()
+    funnel <- data.frame(stage = c('Applied', 'Approved', 'Graduated', 'New BLS AIC'),
+                         total = c(sum(d$applications_all, na.rm = TRUE), sum(d$approved_all, na.rm = TRUE),
+                                   sum(d$graduates, na.rm = TRUE), sum(d$new_bls, na.rm = TRUE)))
+    funnel$stage <- factor(funnel$stage, levels = funnel$stage)
+    funnel$pct <- round(100 * funnel$total / dplyr::lag(funnel$total))
+    funnel$lab <- ifelse(is.na(funnel$pct), funnel$total, paste0(funnel$total, '\n(', funnel$pct, '% of previous)'))
+    funnel$tip <- ifelse(is.na(funnel$pct), paste0(funnel$stage, ': ', funnel$total),
+                         paste0(funnel$stage, ': ', funnel$total, ' (', funnel$pct, '% of previous step)'))
+    p <- ggplot(funnel, aes(stage, total, text = tip)) +
+      geom_col(fill = 'steelblue', width = 0.7) +
+      geom_text(aes(y = total + max(total) * 0.11, label = lab), size = 3.8) +
+      scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+      labs(x = NULL, y = 'People')
+    hover(p, paste0('Pipeline, Jan to ', format(max(d$date), '%b')))
+  })
+  
+  # 4. Joined vs left each month
+  output$g_flow <- renderPlotly({
+    d <- trend_data()
+    flow <- bind_rows(data.frame(date = d$date, Type = 'Joined', Value = d$new_bls),
+                      data.frame(date = d$date, Type = 'Left', Value = -d$exits_all_aic)) %>%
+      filter(!is.na(Value))
+    flow$tip <- paste0(format(flow$date, '%B'), ': ', abs(flow$Value), ' ', tolower(flow$Type))
+    p <- ggplot(flow, aes(date, Value, fill = Type, text = tip)) +
+      geom_col(width = 20) +
+      geom_text(aes(y = Value + ifelse(Value > 0, 1.2, -1.2), label = abs(Value)), size = 3.5) +
+      geom_hline(yintercept = 0) +
+      scale_fill_manual(values = c(Joined = 'seagreen', Left = 'firebrick')) +
+      scale_y_continuous(labels = abs, expand = expansion(mult = 0.1)) +
+      months_axis +
+      labs(x = NULL, y = 'People', fill = NULL)
+    hover(p, 'Joined vs left')
+  })
+  
+  # 5. Where we lose people (year to date)
+  output$g_losses <- renderPlotly({
+    d <- trend_data()
+    losses <- data.frame(stage = c('Before academy', 'In academy or testing', 'During internship', 'After release'),
+                         total = c(sum(d$withdraw_approved, na.rm = TRUE), sum(d$withdraw_students, na.rm = TRUE),
+                                   sum(d$intern_exits_all, na.rm = TRUE), sum(d$exits_all_aic, na.rm = TRUE)))
+    losses$stage <- factor(losses$stage, levels = losses$stage)
+    losses$tip <- paste0(losses$stage, ': ', losses$total, ' people lost')
+    p <- ggplot(losses, aes(stage, total, text = tip)) +
+      geom_col(fill = 'firebrick', width = 0.6) +
+      geom_text(aes(y = total + max(total) * 0.05, label = total), size = 4.5) +
+      scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+      labs(x = NULL, y = 'People lost')
+    hover(p, paste0('Where we lose people, Jan to ', format(max(d$date), '%b')))
+  })
+  output$stageplot<-renderPlotly({req(input$stage);validate(need(input$stage %in% names(labels),'Select a valid series'));d<-data();d$tip<-paste0(format(d$date,'%B'),': ',d[[input$stage]]);p<-ggplot(d,aes(date,.data[[input$stage]],text=tip,group=1))+geom_line(color='#176b79',linewidth=1.2)+geom_point(color='#176b79',size=2)+theme_minimal(base_size=12)+labs(x=NULL,y='Reported count');hover(p,unname(labels[[input$stage]]))})
   output$source<-renderDT(datatable(data(),options=list(scrollX=TRUE,pageLength=10)))
-  output$template<-downloadHandler(filename=function()'bls_monthly_update_template.csv',content=function(file){write.csv(data()[,c('date','bls_emts','new_bls','pending_academy','awaiting_academy','testing','bls_interns')],file,row.names=FALSE,na='')})
+  output$template<-downloadHandler(filename=function()'bls_monthly_update_template.csv',content=function(file){d<-data();d$date<-format(d$date,'%Y-%m-%d');write.csv(d[,setdiff(names(base),'month')],file,row.names=FALSE,na='')})
   output$export<-downloadHandler(filename=function()'bls_funnel_forecast.csv',content=function(file){write.csv(model()$f,file,row.names=FALSE)})
 }
 shinyApp(ui,server)
-
