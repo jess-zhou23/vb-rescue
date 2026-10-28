@@ -398,7 +398,7 @@ server <- function(input,output,session){
   })
   output$stageplot<-renderPlotly({req(input$stage);validate(need(input$stage %in% names(labels),'Select a valid series'));d<-data();d$tip<-paste0(format(d$date,'%B'),': ',d[[input$stage]]);p<-ggplot(d,aes(date,.data[[input$stage]],text=tip,group=1))+geom_line(color='#176b79',linewidth=1.2)+geom_point(color='#176b79',size=2)+theme_minimal(base_size=12)+labs(x=NULL,y='Reported count');hover(p,unname(labels[[input$stage]]))})
   output$source<-renderDT(datatable(data(),options=list(scrollX=TRUE,pageLength=10)))
-  output$template<-downloadHandler(filename=function()'bls_monthly_update_template.csv',content=function(file){write.csv(data()[,c('date','bls_emts','new_bls','pending_academy','awaiting_academy','testing','bls_interns')],file,row.names=FALSE,na='')})
+  output$template<-downloadHandler(filename=function()'bls_monthly_update_template.csv',content=function(file){d<-data();d$date<-format(d$date,'%Y-%m-%d');write.csv(d[,setdiff(names(base),'month')],file,row.names=FALSE,na='')})
   output$export<-downloadHandler(filename=function()'bls_funnel_forecast.csv',content=function(file){write.csv(model()$f,file,row.names=FALSE)})
 }
 shinyApp(ui,server)
