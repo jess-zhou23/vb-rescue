@@ -22,16 +22,28 @@ library(readr)
 
 read in data
 ```{r}
-base <- read_csv("VBRescue_BLS_Shiny_download_only/bls_2026.csv", 
-                 col_types = cols(date = col_date(format = "%m/%d/%Y")))
+base <- read_csv("VBRescue_BLS_Shiny_download_only/bls_2026_updated.csv")
 
 emts <- data.frame(date = base$date, bls_emts = base$bls_emts)
 ```
 
 ## linear regression
+### single
 ```{r}
 base_df <- base[,-2]
 
+x<-as.numeric(difftime(base$date,base$date[1],units='days'))/30.4375
+y<-base_df$bls_emts
+
+slm <- lm(y~x)
+summary(slm)
+
+par(mfrow = c(2, 2))
+plot(slm)
+```
+
+### multiple
+```{r}
 plot(base_df$bls_emts,type='l', xlab='month', ylab="Number of BLS EMTs", main="Number of BLS EMTs" )
 ```
 curved pattern shown. We will try the log transformation first, and also try a polynomial regression later. 
@@ -151,28 +163,105 @@ acf(emts_diff1, main="ACF of Log EMTs (diff 2)")
 ```
 No significant lags shown in the acf plot, so we probably don't want to use time series. 
 
-## KNN
-* I am going to do two combinations of predictors for KNN models. One would only take the month (act as generally ordering) and another takes the high correlation predictors we found in linear regression exploration
+#ML setup
 
 Split data
 ```{r}
 set.seed(2026)
 
-test <- base_df[9,]
+test_id  <- 9
 
-train_id <- sample(seq_len(nrow(base_df[-9,])), size = 5)
+n <- nrow(base[-9,])
+id <- c(1:n)
 
-train <- base_df[train_id, ]
-validate  <- base_df[-c(9,train_id), ]
+train_id <- id[1:5]
+valid_id <- id[6:8]
+
+
+train <- base[train_id, ]
+valid <- base[valid_id, ]
+test  <- base[test_id, ]
+dev <- rbind(train, valid) 
 
 dim(train)
 ```
+CV implementation
+```{r}
+set.seed(2026)
+fold_id <- sample(rep(1:4, length.out = nrow(dev)))
+degrees <- 1:4
+table(fold_id)
+
+cv_mse <- function(train_df, model_pred_func,
+                   outcome = "bls_emts",
+                   date_col = "date",
+                   initial_window = 4,
+                   horizon = 1,
+                   step = 1) {
+
+  # Sort observations chronologically
+  train_df <- train_df[
+    order(train_df[[date_col]]), 
+  ]
+
+  n <- nrow(train_df)
+
+  if (initial_window < 2 || initial_window >= n) {
+    stop("initial_window must be between 2 and nrow(train_df) - 1.")
+  }
+
+  if (horizon < 1 || step < 1 ||
+      initial_window + horizon > n) {
+    stop("Invalid horizon or step.")
+  }
+
+  squared_errors <- numeric(0)
+
+  # Expanding-window CV
+  for (origin in seq(
+    from = initial_window,
+    to = n - horizon,
+    by = step
+  )) {
+
+    train_fold <- train_df[1:origin, , drop = FALSE]
+
+    holdout_fold <- train_df[
+      (origin + 1):(origin + horizon),
+      ,
+      drop = FALSE
+    ]
+
+    # Fit on the past and predict the future
+    pred <- model_pred_func(train_fold, holdout_fold)
+
+    if (length(pred) != nrow(holdout_fold)) {
+      stop("Prediction count does not match holdout size.")
+    }
+
+    actual <- holdout_fold[[outcome]]
+
+    squared_errors <- c(
+      squared_errors,
+      (actual - as.numeric(pred))^2
+    )
+  }
+
+  mean(squared_errors, na.rm = TRUE)
+}
+
+```
+
+
+## KNN
+* I am going to do two combinations of predictors for KNN models. One would only take the month (act as generally ordering) and another takes the high correlation predictors we found in linear regression exploration
+
 ### Only Month
 subset data and standardize month
 ```{r}
-train_m <- train[,c(1,9)]
-val_m <- validate[,c(1,9)]
-test_m <- test[,c(1,9)]
+train_m <- train[,c(1,10)]
+val_m <- validate[,c(1,10)]
+test_m <- test[,c(1,10)]
 
 train_center_m <- sapply(train_m[c("month")], mean)
 train_scale_m  <- sapply(train_m[c("month")], sd)
@@ -204,10 +293,6 @@ knn_reg_predict <- function(x_train, y_train, x_new, k) {
 ```
 
 ```{r}
-mse <- function(actual, predicted) {
-  mean((actual - predicted)^2)
-}
-
 k_values <- c(1, 2, 3, 4, 5)
 
 results_m <- do.call(rbind, lapply(k_values, function(k) {
@@ -217,7 +302,7 @@ results_m <- do.call(rbind, lapply(k_values, function(k) {
   data.frame(
     k = k,
     training_mse = mse(train_m$bls_emts, pred_train),
-    validate_mse = mse(test_m$bls_emts, pred_validate)
+    validate_mse = mse(val_m$bls_emts, pred_validate)
   )
 }))
 
@@ -246,9 +331,9 @@ month_knn_pred
 
 ### Use lm_df
 ```{r}
-train_lm <- train[,c(1, 5, 7, 9)]
-val_lm <- validate[,c(1, 5, 7, 9)]
-test_lm <- test[,c(1,5,7,9)]
+train_lm <- train[,c(1, 6, 8, 10)]
+val_lm <- validate[,c(1, 6, 8, 10)]
+test_lm <- test[,c(1, 6, 8, 10)]
 
 train_center_lm <- sapply(train_lm[,c(1:3)], mean)
 train_scale_lm  <- sapply(train_lm[,c(1:3)], sd)
@@ -306,8 +391,312 @@ lm_knn_pred
 ```
 
 Comparing the two models on validate MSE, lm combination models perform better. 
+```{r}
+KNN_m_best <- results_m[which(results_m$validate_mse==min(results_m$validate_mse[-1])),]
+KNN_m_best$method <- paste("KNN =", KNN_m_best$k)
+KNN_m_best <- KNN_m_best[,-1]
 
+KNN_lm_best <- results_lm[which(results_lm$validate_mse==min(results_lm$validate_mse[-1])),]
+KNN_lm_best$method <- paste("lm KNN =", KNN_lm_best$k)
+KNN_lm_best <- KNN_lm_best[,-1]
+
+KNN_best <- rbind(KNN_m_best, KNN_lm_best)
+KNN_best
+```
+
+
+### CV adaptation
+```{r}
+knn_wrapper <- function(train, new, predictor_cols, k) {
+
+  # Extract predictors as matrices
+  x_train <- as.matrix(train[, predictor_cols, drop = FALSE])
+  x_new   <- as.matrix(new[, predictor_cols, drop = FALSE])
+
+  y_train <- train$bls_emts
+
+  # Standardize using training-fold statistics only
+  x_mean <- colMeans(x_train)
+  x_sd   <- apply(x_train, 2, sd)
+
+  # Avoid division by zero for constant predictors
+  x_sd[!is.finite(x_sd) | x_sd == 0] <- 1
+
+  x_train_scaled <- scale(
+    x_train,
+    center = x_mean,
+    scale = x_sd
+  )
+
+  x_new_scaled <- scale(
+    x_new,
+    center = x_mean,
+    scale = x_sd
+  )
+
+  # K cannot exceed the training sample size
+  k_use <- min(k, nrow(x_train_scaled))
+
+  knn_reg_predict(
+    x_train = x_train_scaled,
+    y_train = y_train,
+    x_new = x_new_scaled,
+    k = k_use
+  )
+}
+```
+
+Month only model
+```{r}
+knn_time_model <- function(train, new, k = 3) {
+
+  origin_date <- min(train$date)
+
+  train$time_index <- as.numeric(
+    difftime(train$date, origin_date, units = "days")
+  ) / 30.4375
+
+  new$time_index <- as.numeric(
+    difftime(new$date, origin_date, units = "days")
+  ) / 30.4375
+
+  knn_wrapper(
+    train = train,
+    new = new,
+    predictor_cols = "time_index",
+    k = k
+  )
+}
+```
+
+lm_df approach KNN
+```{r}
+mlr_predictors <- c(
+  "time_index",
+  "emt_students",
+  "ops_pending"
+)
+
+knn_mlr_model <- function(train, new, k = 3) {
+
+  origin_date <- min(train$date)
+
+  train$time_index <- as.numeric(
+    difftime(train$date, origin_date, units = "days")
+  ) / 30.4375
+
+  new$time_index <- as.numeric(
+    difftime(new$date, origin_date, units = "days")
+  ) / 30.4375
+
+  knn_wrapper(
+    train = train,
+    new = new,
+    predictor_cols = mlr_predictors,
+    k = k
+  )
+}
+```
+
+
+### Compare with pure MLR
+
+```{r}
+pred_train_lm <- lm(formula = bls_emts ~ month+emt_students+ops_pending, data = train_lm)
+pred_val_lm  <- predict.lm(pred_train_lm, newdata=val_lm[,-4])
+MLR_best <-data.frame(
+  method = "MLR",
+  training_mse = mse(train_lm$bls_emts, pred_train_lm$fitted.values),
+  validate_mse = mse(val_lm$bls_emts, pred_val_lm)
+) 
+MLR_best
+```
+
+```{r}
+mlr_model <- function(train, new) {
+
+  origin_date <- min(train$date)
+
+  train$time_index <- as.numeric(
+    difftime(train$date, origin_date, units = "days")
+  ) / 30.4375
+
+  new$time_index <- as.numeric(
+    difftime(new$date, origin_date, units = "days")
+  ) / 30.4375
+
+  fit <- lm(bls_emts ~ time_index+emt_students+ops_pending, data = train)
+
+  predict(fit, newdata = new)
+}
+```
+
+### Compare with SLR (already implemented)
+
+```{r}
+pred_train_slr <- lm(formula = bls_emts ~ month, data = train_lm)
+pred_val_slr  <- predict(pred_train_slr, data=val_lm)
+SLR_perf <- data.frame(
+  method = "SLR",
+  training_mse = mse(train_lm$bls_emts, pred_train_slr$fitted.values),
+  validate_mse = mse(val_lm$bls_emts, pred_val_lm)
+) 
+```
+```{r}
+lm_time_model <- function(train, new) {
+
+  origin_date <- min(train$date)
+
+  train$time_index <- as.numeric(
+    difftime(train$date, origin_date, units = "days")
+  ) / 30.4375
+
+  new$time_index <- as.numeric(
+    difftime(new$date, origin_date, units = "days")
+  ) / 30.4375
+
+  fit <- lm(bls_emts ~ time_index, data = train)
+
+  predict(fit, newdata = new)
+}
+```
+
+### Compare with Endpoint (already implemented)
+
+```{r}
+endpoint_pred <- function(train_df, new_df){
+  x_train <- as.numeric(
+    difftime(train_df$date, train_df$date[1], units = "days")
+  ) / 30.4375
+
+  y_train <- train_df$bls_emts
+  
+  slope <- (tail(y_train, 1) - head(y_train, 1)) /
+    (tail(x_train, 1) - head(x_train, 1))
+
+  if (!is.finite(slope)) {
+    stop("Cannot estimate trend from training dates")
+  }
+
+  last_date <- tail(train_df$date, 1)
+  current <- tail(y_train, 1)
+
+  elapsed <- as.numeric(
+    difftime(new_df$date, last_date, units = "days")
+  ) / 30.4375
+
+  pred <- pmax(0, current + slope * elapsed)
+
+  return(pred)
+}
+
+train_ep <- train[,c(2,10)]
+val_ep <- validate[,c(2,10)]
+test_ep <- test[,c(2,10)]
+
+pred_train_end <- endpoint_pred(train_ep, train_ep[,-2])
+pred_val_end  <- endpoint_pred(train_ep, val_ep[,-2])
+ep_perf <-data.frame(
+  method = "Endpoint",
+  training_mse = mse(train_lm$bls_emts, pred_train_end),
+  validate_mse = mse(val_lm$bls_emts, pred_val_end)
+) 
+```
+
+
+# Comparison table
+
+```{r}
+models <- list(
+  Endpoint = endpoint_pred,
+  SLR = lm_time_model,
+  MLR = mlr_model
+)
+
+k_values <- c(2, 3, 4, 5)
+
+# Add KNN models for each k
+for (k in k_values) {
+
+  models[[paste0("KNN_Time_k", k)]] <-
+    local({
+      kk <- k
+      function(train, new) {
+        knn_time_model(train, new, k = kk)
+      }
+    })
+
+  models[[paste0("KNN_MLR_k", k)]] <-
+    local({
+      kk <- k
+      function(train, new) {
+        knn_mlr_model(train, new, k = kk)
+      }
+    })
+}
+
+cv_results <- data.frame(
+  Model = names(models),
+  CV_MSE = sapply(models, function(model_func) {
+    cv_mse(
+      train_df = dev,
+      model_pred_func = model_func,
+      outcome = "bls_emts",
+      date_col = "date",
+      initial_window = 4,
+      horizon = 1
+    )
+  })
+)
+
+cv_results <- cv_results[order(cv_results$CV_MSE), ]
+rownames(cv_results) <- NULL
+
+print(cv_results)
+```
+# Final top 3 model performance
 If using the whole development set:
+
+## test mses
+
+```{r}
+top5 <- head(
+  cv_results[order(cv_results$CV_MSE), ],
+  5
+)
+
+print(top5)
+
+```
+
+```{r}
+top5_names <- top5$Model
+
+test_results <- data.frame(
+  Model = top5_names,
+  CV_MSE = top5$CV_MSE,
+  Test_MSE = sapply(top5_names, function(model_name) {
+
+    pred <- models[[model_name]](dev, test)
+
+    mean(
+      (test$bls_emts - as.numeric(pred))^2,
+      na.rm = TRUE
+    )
+  })
+)
+
+test_results <- test_results[order(test_results$CV_MSE), ]
+rownames(test_results) <- NULL
+
+print(test_results)
+```
+
+
+
+
+
+##KNN
 ```{r}
 dev_lm <- base_df[-9,c(1, 5, 7, 9)]
 
@@ -344,13 +733,46 @@ plot(results_dev$k, results_dev$training_mse,
      type = "o", pch = 19, col = "gray40",
      xlab = "K", ylab = "Mean squared error",
      ylim = range(results_dev[c("training_mse", "test_mse")]))
-lines(results_dev$k, results_dev$validate_mse,
+lines(results_dev$k, results_dev$test_mse,
       type = "o", pch = 19, col = "#0072B2")
 legend("topleft", c("Training MSE", "Test MSE"),
        col = c("gray40", "#0072B2"), pch = 19, lty = 1, bty = "n")
 ```
 
-## Ridge/Lasso
+##SLR
+```{r}
+pred_dev_slr <- lm(formula = bls_emts ~ date, data = dev)
+pred_test_slr <- predict(pred_dev_slr, data=test[,-4])
+SLR_perf <- data.frame(
+  method = "SLR",
+  training_mse = mse(dev$bls_emts, pred_dev_slr$fitted.values),
+  test_mse = mse(test$bls_emts, pred_test_slr)
+) 
+SLR_perf
+```
 
-## 
+##MLR
 
+```{r}
+
+pred_dev_lm <- lm(formula = bls_emts ~ date+emt_students+ops_pending, data = dev)
+pred_test_lm  <- predict.lm(pred_dev_lm, newdata=test[,-4])
+MLR_best <-data.frame(
+  method = "MLR",
+  dev_mse = mse(dev$bls_emts, pred_dev_lm$fitted.values),
+  test_mse = mse(test$bls_emts, pred_test_lm)
+) 
+
+# Prediction using your model function
+pred_function <- models[["MLR"]](dev, test)
+
+# Compare with your manual test predictions
+comparison <- data.frame(
+  date = test$date,
+  actual = test$bls_emts,
+  pred_function = as.numeric(pred_function),
+  pred_manual = pred_test_lm
+)
+
+print(comparison)
+```
