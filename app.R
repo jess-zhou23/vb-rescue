@@ -6,7 +6,7 @@ library(lubridate)
 library(DT)
 library(plotly)
 
-# Robust date parser: accepts ISO (2026-09-01, 2026/09/01) and US month/day/year (9/1/2026).
+# Robust date parser: accepts ISO (YYYY-MM-DD, YYYY/MM/DD) and US month/day/year (M/D/YYYY).
 # Anything unparseable or implausible (before year 2000) becomes NA and is dropped downstream.
 parse_dates <- function(x){
   x <- trimws(as.character(x))
@@ -31,9 +31,9 @@ labels <- c(pending_academy='Pending academy enrollment', awaiting_academy='Awai
             graduates='EMT graduates (all)', ops_completions='Operations completions (all)',
             new_bls='New BLS AICs')
 ui <- fluidPage(
-  tags$head(tags$style(HTML('body{background:#f6f8fb;color:#1e293b}.well{background:white;border:1px solid #e2e8f0}.metric{background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:15px}.metric h2{margin:5px 0;color:#176b79}.note{color:#64748b;font-size:13px}.tab-content{padding-top:18px}'))),
+  tags$head(tags$style(HTML('body{background:#f6f8fb;color:#1e293b}.well{background:white;border:1px solid #e2e8f0}.metric{background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:15px}.note{color:#64748b;font-size:13px}.tab-content{padding-top:18px}@media (min-width:768px){.col-sm-3 > .well{max-height:calc(100vh - 100px);overflow-y:auto}}'))),
   titlePanel('VB Rescue | BLS workforce planning'),
-  p('2026 BLS membership snapshots + 2025 recruitment funnel assumptions | Target: 320'),
+  p('BLS membership snapshots + recruitment funnel assumptions | Target: 320'),
   sidebarLayout(sidebarPanel(width=3,
                              numericInput('target','BLS provider target',320,min=1),
                              sliderInput('horizon','Forecast horizon (months)',12,120,60,step=12),
@@ -59,7 +59,7 @@ ui <- fluidPage(
                              actionButton('reset_scenario','Reset entire scenario'),
                              tags$hr(),h4('Workforce & timing'),
                              numericInput('annual_exits','Assumed active BLS departures per year',NA,min=0,step=1),
-                             p(class='note','Leave blank to infer departures from 2026 new-BLS counts minus observed membership growth. This is not a measured attrition rate.'),
+                             p(class='note','Leave blank to infer departures from the latest new-BLS counts minus observed membership growth. This is not a measured attrition rate.'),
                              numericInput('pipeline_lag','Pipeline delay to new AICs (months)',6,min=0,max=36),
                              tags$hr(),h4('Update membership data'),
                              uiOutput('csv_upload_ui'),
@@ -72,7 +72,7 @@ ui <- fluidPage(
                                    column(4,div(class='metric',strong('Funnel Scenario Target Date'),h2(textOutput('scenario_eta',inline=TRUE))))),
                           tabsetPanel(
                             tabPanel('Forecast',plotOutput('forecast',height='410px'),tableOutput('comparison'),p(class='note','Funnel forecasts are scenario calculations, not statistical prediction intervals. The 2025 ratios may mix recruitment cohorts.')),
-                            tabPanel('2026 trends',
+                            tabPanel('Latest trends',
                                      plotlyOutput('g_goal',height='330px'),
                                      plotlyOutput('g_snapshot',height='300px'),
                                      plotlyOutput('g_funnel',height='330px'),
@@ -81,7 +81,18 @@ ui <- fluidPage(
                                      p(class='note','Exits include a few ALS volunteers, so the BLS-only number is slightly lower.'),
                                      plotlyOutput('g_losses',height='300px'),
                                      tags$hr(),selectInput('stage','Explore a membership or pipeline measure',choices=setNames(names(labels),unname(labels)),selected='bls_emts'),plotlyOutput('stageplot',height='290px')),
-                            tabPanel('2025 funnel & assumptions',h4('Historical 2025 funnel'),tableOutput('funnel_table'),h4('2025 reported pipeline losses'),p('47 approved applicants, 105 academy students or testing candidates, and 45 interns were lost from the recruitment pipeline. These are NOT active BLS workforce exits, and are not subtracted from membership. They may overlap with the funnel ratios.'),h4('Scenario calculation'),verbatimTextOutput('math_summary'),p(class='note','Annual counts are ratios of annual totals, not verified same-cohort conversion probabilities. Academy seat capacity is an upper bound, not a target. Application and graduation totals may contain non-BLS candidates; verify with the client before interpreting this as a BLS-only pipeline.'),h4('2026 source data'),DTOutput('source'))
+                            tabPanel('Scenario Details',
+                                     h4('Reported pipeline losses'),
+                                     p('47 approved applicants, 105 academy students or testing candidates, and 45 interns were lost from the recruitment pipeline. These are NOT active BLS workforce exits, and are not subtracted from membership. They may overlap with the funnel ratios.'),
+                                     
+                                     h4('Scenario calculation'),
+                                     uiOutput('math_summary'),
+                                     
+                                     p(class='note','Annual counts are ratios of annual totals, not verified same-cohort conversion probabilities. Academy seat capacity is an upper bound, not a target. Application and graduation totals may contain non-BLS candidates; verify with the client before interpreting this as a BLS-only pipeline.'),
+                                     
+                                     h4('Source data'),
+                                     DTOutput('source')
+                            )
                           )
                 ))
 )
@@ -246,13 +257,13 @@ server <- function(input,output,session){
     # A capacity-constrained baseline at unchanged 2025 ratios and the SAME operational capacity.
     base_entrants<-min(ref$applications*rates['approval'],input$sessions*input$seats*input$seat_utilization/100)
     base_aics<-base_entrants*rates['graduation']*rates['qualification']
-    # When no BLS departure count is supplied, infer from observed 2026 new BLS inflow and net growth.
+    # When no BLS departure count is supplied, infer from the latest new BLS inflow and net growth.
     observed_new<-mean(d$new_bls,na.rm=TRUE)
     inferred_exits<-max(0,12*(observed_new-slope))
     exits<-if(is.na(input$annual_exits)) inferred_exits else input$annual_exits
-    # Calibrate the no-change funnel to observed 2026 net growth, preserving the 2026 status quo.
+    # Calibrate the no-change funnel to observed net growth, preserving the status quo.
     # Scenario changes are the DIFFERENCE between new and baseline annual AIC throughput.
-    # This avoids an unsupported claim that 2025 gross flows reproduce 2026 net growth.
+    # This avoids an unsupported claim that 2025 gross flows reproduce the latest net growth.
     annual_delta<-annual_aics-base_aics
     lag<-input$pipeline_lag
     months_active<-pmax(0,h-lag)
@@ -271,14 +282,14 @@ server <- function(input,output,session){
     m<-model();d<-data();f<-m$f
     ggplot()+geom_line(data=d,aes(date,bls_emts,color='Observed BLS'),linewidth=1.2)+
       geom_point(data=d,aes(date,bls_emts,color='Observed BLS'),size=2)+
-      geom_line(data=f,aes(date,status_quo,color='2026 trend'),linetype=2,linewidth=1)+
+      geom_line(data=f,aes(date,status_quo,color='Status quo trend'),linetype=2,linewidth=1)+
       geom_line(data=f,aes(date,scenario,color='Funnel scenario'),linewidth=1.2)+
       geom_hline(yintercept=input$target,linetype='dotdash',color='#6b7280')+
-      scale_color_manual(values=c('Observed BLS'='#176b79','2026 trend'='#64748b','Funnel scenario'='#d8892c'))+
+      scale_color_manual(values=c('Observed BLS'='#176b79','Status quo trend'='#64748b','Funnel scenario'='#d8892c'))+
       labs(x=NULL,y='Active BLS AICs (proxy)',color=NULL)+theme_minimal(base_size=13)+theme(legend.position='bottom')
   })
   output$comparison<-renderTable({m<-model();data.frame(
-    Measure=c('2026 observed trend (AICs/month)','2025 baseline new AICs/year (capacity constrained)',
+    Measure=c('Latest observed trend (AICs/month)','2025 baseline new AICs/year (capacity constrained)',
               'Scenario new AICs/year','Additional AICs/year vs 2025 baseline',
               'Inferred active BLS departures/year (context only)'),
     Value=round(c(m$slope,m$base_aics,m$annual_aics,m$annual_delta,m$exits),1))},striped=TRUE)
@@ -286,16 +297,62 @@ server <- function(input,output,session){
     Stage=c('Applications','Approved / progressed','Academy entrants (capacity capped)','Academy graduates','New AICs'),
     `2025 annual count`=c(1229,408,NA,161,101),
     `Scenario annual count`=round(c(input$applications,m$annual_approved,m$annual_entrants,m$annual_graduates,m$annual_aics),1),check.names=FALSE)},striped=TRUE)
-  output$math_summary<-renderText({m<-model();paste0(
-    'Historical annual ratios: 408/1229 = ',round(100*rates['approval'],1),'% approved; 161/408 = ',round(100*rates['graduation'],1),'% graduated; 101/161 = ',round(100*rates['qualification'],1),'% new AICs.\n',
-    'Scenario rates (capped at 100%): ',paste(round(100*m$rates,1),collapse='%, '),'%.\n',
-    'Annual academy capacity = ',input$sessions,' x ',input$seats,' x ',input$seat_utilization/100,' = ',input$sessions*input$seats*input$seat_utilization/100,' usable seats.\n',
-    'Scenario new AICs = min(applications x approval rate, usable seats) x graduation rate x AIC yield = ',round(m$annual_aics,1),'/year.\n',
-    'Increment vs unchanged 2025 funnel at same capacity = ',round(m$annual_delta,1),'/year.\n',
-    'Projected membership at month h = 2026 trend forecast + (annual increment / 12) x max(0, h - ',m$lag,').\n',
-    '2026 implied active departures = ',round(m$inferred_exits,1),'/year; user assumption = ',round(m$exits,1),'/year. These are shown for context only and do NOT alter the calibrated forecast.\n',
-    'Important: the annual funnel rates are not cohort-verified, and graduation/AIC populations may not be strictly BLS-only.')})
-  # ---- 2026 trends tab: these all use data(), so they update when new months are uploaded ----
+  output$math_summary <- renderUI({
+    m <- model()
+    
+    div(
+      class = 'scenario-details',
+      
+      h4('1. Historical conversion rates'),
+      p(
+        strong('Approval: '), round(100 * rates['approval'], 1), '%',
+        ' | ',
+        strong('Graduation: '), round(100 * rates['graduation'], 1), '%',
+        ' | ',
+        strong('AIC qualification: '), round(100 * rates['qualification'], 1), '%'
+      ),
+      
+      h4('2. Scenario assumptions'),
+      p(
+        strong('Adjusted rates: '),
+        paste(round(100 * m$rates, 1), collapse = '%, '), '%'
+      ),
+      p(
+        strong('Annual academy capacity: '),
+        input$sessions, ' academies × ', input$seats,
+        ' seats × ', input$seat_utilization, '% utilization = ',
+        input$sessions * input$seats * input$seat_utilization / 100,
+        ' usable seats.'
+      ),
+      
+      h4('3. Annual projections'),
+      p(
+        strong('Projected new AICs: '),
+        round(m$annual_aics, 1), ' per year.'
+      ),
+      p(
+        strong('Change from the 2025 baseline: '),
+        round(m$annual_delta, 1), ' AICs per year.'
+      ),
+      
+      h4('4. Membership forecast'),
+      p(
+        'Projected membership = status quo trend forecast + annual scenario increment, ',
+        'starting after the ', m$lag, '-month pipeline delay.'
+      ),
+      p(
+        strong('Implied active departures: '),
+        round(m$inferred_exits, 1), ' per year. ',
+        'User assumption: ', round(m$exits, 1), ' per year.'
+      ),
+      
+      p(
+        class = 'note',
+        'Departure estimates are shown for context only and do not alter the calibrated forecast. Annual funnel rates are not cohort-verified, and graduation/AIC populations may not be strictly BLS-only.'
+      )
+    )
+  })
+  # ---- Latest trends tab: these use data(), so they update when new months are uploaded ----
   # Only the latest year in the data, so year-to-date totals don't mix years
   trend_data <- reactive({
     d <- data()
