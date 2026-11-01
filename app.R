@@ -32,8 +32,11 @@ labels <- c(pending_academy='Pending academy enrollment', awaiting_academy='Awai
             new_bls='New BLS AICs')
 ui <- fluidPage(
   tags$head(tags$style(HTML('body{background:#f6f8fb;color:#1e293b}.well{background:white;border:1px solid #e2e8f0}.metric{background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:15px}.note{color:#64748b;font-size:13px}.tab-content{padding-top:18px}@media (min-width:768px){.col-sm-3 > .well{max-height:calc(100vh - 100px);overflow-y:auto}}'))),
-  titlePanel('VB Rescue | BLS workforce planning'),
-  p('BLS membership snapshots + recruitment funnel assumptions | Target: 320'),
+  div(
+    style = 'text-align: center; padding: 24px 12px 20px; margin-bottom: 12px;',
+    h1('Virginia Beach Rescue Foundation | BLS Volunteer Planner',
+       style = 'font-size: 30px; font-weight: 700; color: #17324d; margin: 0; line-height: 1.3;')
+  ),
   sidebarLayout(sidebarPanel(width=3,
                              numericInput('target','BLS provider target',320,min=1),
                              sliderInput('horizon','Forecast horizon (months)',12,120,60,step=12),
@@ -366,7 +369,20 @@ server <- function(input,output,session){
       layout(title = list(text = paste0('<b>', title, '</b>'), x = 0.01, font = list(size = 20)),
              margin = list(t = 60),
              legend = list(orientation = 'h', x = 0.35, y = -0.12)) %>%
-      config(displayModeBar = FALSE)
+      config(
+        displayModeBar = TRUE,
+        displaylogo = FALSE,
+        modeBarButtons = list(
+          list("zoomIn2d", "zoomOut2d", "autoScale2d", "resetScale2d", "toImage")
+        ),
+        toImageButtonOptions = list(
+          format = "png",
+          filename = "VB_Rescue_Graph",
+          width = 1200,
+          height = 700,
+          scale = 2
+        )
+      )
   }
   
   # 1. EMTs vs goal
@@ -456,6 +472,14 @@ server <- function(input,output,session){
   output$stageplot<-renderPlotly({req(input$stage);validate(need(input$stage %in% names(labels),'Select a valid series'));d<-data();d$tip<-paste0(format(d$date,'%B'),': ',d[[input$stage]]);p<-ggplot(d,aes(date,.data[[input$stage]],text=tip,group=1))+geom_line(color='#176b79',linewidth=1.2)+geom_point(color='#176b79',size=2)+theme_minimal(base_size=12)+labs(x=NULL,y='Reported count');hover(p,unname(labels[[input$stage]]))})
   output$source<-renderDT(datatable(data(),options=list(scrollX=TRUE,pageLength=10)))
   output$template<-downloadHandler(filename=function()'bls_monthly_update_template.csv',content=function(file){d<-data();d$date<-format(d$date,'%Y-%m-%d');write.csv(d[,setdiff(names(base),'month')],file,row.names=FALSE,na='')})
-  output$export<-downloadHandler(filename=function()'bls_funnel_forecast.csv',content=function(file){write.csv(model()$f,file,row.names=FALSE)})
+  output$export <- downloadHandler(
+    filename = function() 'bls_funnel_forecast.csv',
+    content = function(file) {
+      projections <- model()$f
+      projections$status_quo <- pmax(0, round(projections$status_quo))
+      projections$scenario <- pmax(0, round(projections$scenario))
+      write.csv(projections, file, row.names = FALSE)
+    }
+  )
 }
 shinyApp(ui,server)
