@@ -177,7 +177,7 @@ server <- function(input,output,session){
     upload <- input[[paste0('upload_', upload_version())]]
     req(upload)
     
-    required_cols <- c('date', 'bls_emts', 'new_bls')
+    required_cols <- c('date', 'bls_emts', 'new_bls', 'emt_students', 'ops_pending')
     u <- tryCatch(
       read.csv(upload$datapath, stringsAsFactors = FALSE),
       error = function(e) NULL
@@ -187,7 +187,7 @@ server <- function(input,output,session){
         is.null(u) || !all(required_cols %in% names(u))) {
       uploaded_data(NULL)
       showNotification(
-        'Invalid CSV. Required columns: date, bls_emts, new_bls.',
+        'Invalid CSV. Required columns: date, bls_emts, new_bls, emt_students, ops_pending.',
         type = 'error', duration = 8
       )
       return()
