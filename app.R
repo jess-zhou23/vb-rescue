@@ -17,6 +17,41 @@ parse_dates <- function(x){
   out[!is.na(out) & out < as.Date('2000-01-01')] <- NA
   out
 }
+
+endpoint_pred <- function(train_df, new_df) {
+  
+  x_train <- as.numeric(
+    difftime(
+      train_df$date,
+      train_df$date[1],
+      units = "days"
+    )
+  ) / 30.4375
+  
+  y_train <- train_df$bls_emts
+  
+  slope <- (
+    tail(y_train, 1) - head(y_train, 1)
+  ) / (
+    tail(x_train, 1) - head(x_train, 1)
+  )
+  
+  if (!is.finite(slope)) {
+    stop("Cannot estimate trend from training dates")
+  }
+  
+  last_date <- tail(train_df$date, 1)
+  current <- tail(y_train, 1)
+  
+  elapsed <- as.numeric(
+    difftime(new_df$date, last_date, units = "days")
+  ) / 30.4375
+  
+  pred <- pmax(0, current + slope * elapsed)
+  
+  return(pred)
+}
+
 base <- read.csv('bls_2026.csv', stringsAsFactors=FALSE)
 base$date <- parse_dates(base$date)
 # These are annual cross-sectional ratios, not confirmed same-cohort probabilities.
@@ -243,7 +278,7 @@ server <- function(input,output,session){
     z <- c("bls_emts", "date", "emt_students", "ops_pending","new_bls")
     d <- data() |>
       select(all_of(z)) |>
-      filter(!is.na(bls_emts), !is.na(date)) |>
+      filter(!is.na(bls_emts), !is.na(date), !is.na(emt_students), !is.na(ops_pending)) |>
       arrange(date)
     
     validate(need(nrow(d) >= 2,"At least two membership observations required"))
@@ -275,7 +310,7 @@ server <- function(input,output,session){
     )
     
     # 1. MLR -----
-    mlr_mod <- lm(bls_emts ~ x + emt_students + ops_pending,data = d)
+    mlr_mod <- lm(bls_emts ~ x + emt_students + ops_pending, data = d)
     
     mlr_pred <- predict(mlr_mod,newdata = future_df)
     mlr_pred <- pmax(0, mlr_pred)
