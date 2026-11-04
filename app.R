@@ -17,6 +17,41 @@ parse_dates <- function(x){
   out[!is.na(out) & out < as.Date('2000-01-01')] <- NA
   out
 }
+
+endpoint_pred <- function(train_df, new_df) {
+  
+  x_train <- as.numeric(
+    difftime(
+      train_df$date,
+      train_df$date[1],
+      units = "days"
+    )
+  ) / 30.4375
+  
+  y_train <- train_df$bls_emts
+  
+  slope <- (
+    tail(y_train, 1) - head(y_train, 1)
+  ) / (
+    tail(x_train, 1) - head(x_train, 1)
+  )
+  
+  if (!is.finite(slope)) {
+    stop("Cannot estimate trend from training dates")
+  }
+  
+  last_date <- tail(train_df$date, 1)
+  current <- tail(y_train, 1)
+  
+  elapsed <- as.numeric(
+    difftime(new_df$date, last_date, units = "days")
+  ) / 30.4375
+  
+  pred <- pmax(0, current + slope * elapsed)
+  
+  return(pred)
+}
+
 base <- read.csv('bls_2026.csv', stringsAsFactors=FALSE)
 base$date <- parse_dates(base$date)
 # These are annual cross-sectional ratios, not confirmed same-cohort probabilities.
@@ -142,7 +177,7 @@ server <- function(input,output,session){
     upload <- input[[paste0('upload_', upload_version())]]
     req(upload)
     
-    required_cols <- c('date', 'bls_emts', 'new_bls')
+    required_cols <- c('date', 'bls_emts', 'new_bls', 'emt_students', 'ops_pending')
     u <- tryCatch(
       read.csv(upload$datapath, stringsAsFactors = FALSE),
       error = function(e) NULL
@@ -152,7 +187,7 @@ server <- function(input,output,session){
         is.null(u) || !all(required_cols %in% names(u))) {
       uploaded_data(NULL)
       showNotification(
-        'Invalid CSV. Required columns: date, bls_emts, new_bls.',
+        'Invalid CSV. Required columns: date, bls_emts, new_bls, emt_students, ops_pending.',
         type = 'error', duration = 8
       )
       return()
@@ -239,43 +274,148 @@ server <- function(input,output,session){
   })
   
   model <- reactive({
-    d<-data()|>filter(!is.na(bls_emts))|>arrange(date)
-    validate(need(nrow(d)>=2,'At least two membership observations required'))
-    x<-as.numeric(difftime(d$date,d$date[1],units='days'))/30.4375
-    y<-d$bls_emts
-    slope<-if(input$baseline=='linear') unname(coef(lm(y~x))[2]) else (tail(y,1)-head(y,1))/(tail(x,1)-head(x,1))
-    validate(need(is.finite(slope),'Cannot estimate trend from these dates'))
-    last<-tail(d$date,1); current<-tail(y,1); H<-input$horizon; h<-seq_len(H)
-    future<-last %m+% months(h)
-    elapsed<-as.numeric(difftime(future,last,units='days'))/30.4375
-    trend<-pmax(0,current+slope*elapsed)
-    # Funnel: annual observed ratios; caps are applied to entering academy, not graduates.
-    p1<-min(1,rates['approval']*input$application_mult/100)
-    p2<-min(1,rates['graduation']*input$academy_mult/100)
-    p3<-min(1,rates['qualification']*input$intern_mult/100)
-    annual_approved<-input$applications*p1
-    annual_entrants<-min(annual_approved,input$sessions*input$seats*input$seat_utilization/100)
-    annual_graduates<-annual_entrants*p2
-    annual_aics<-annual_graduates*p3
-    # A capacity-constrained baseline at unchanged 2025 ratios and the SAME operational capacity.
-    base_entrants<-min(ref$applications*rates['approval'],input$sessions*input$seats*input$seat_utilization/100)
-    base_aics<-base_entrants*rates['graduation']*rates['qualification']
-    # When no BLS departure count is supplied, infer from the latest new BLS inflow and net growth.
-    observed_new<-mean(d$new_bls,na.rm=TRUE)
-    inferred_exits<-max(0,12*(observed_new-slope))
-    exits<-if(is.na(input$annual_exits)) inferred_exits else input$annual_exits
-    # Calibrate the no-change funnel to observed net growth, preserving the status quo.
-    # Scenario changes are the DIFFERENCE between new and baseline annual AIC throughput.
-    # This avoids an unsupported claim that 2025 gross flows reproduce the latest net growth.
-    annual_delta<-annual_aics-base_aics
-    lag<-input$pipeline_lag
-    months_active<-pmax(0,h-lag)
-    scenario<-pmax(0,trend+annual_delta/12*months_active)
-    f<-data.frame(date=future,status_quo=trend,scenario=scenario)
-    list(f=f,slope=slope,current=current,annual_approved=annual_approved,annual_entrants=annual_entrants,
-         annual_graduates=annual_graduates,annual_aics=annual_aics,base_aics=base_aics,
-         annual_delta=annual_delta,exits=exits,inferred_exits=inferred_exits,
-         rates=c(p1,p2,p3),lag=lag)
+    # Historical data
+    z <- c("bls_emts", "date", "emt_students", "ops_pending","new_bls")
+    d <- data() |>
+      select(all_of(z)) |>
+      filter(!is.na(bls_emts), !is.na(date), !is.na(emt_students), !is.na(ops_pending)) |>
+      arrange(date)
+    
+    validate(need(nrow(d) >= 2,"At least two membership observations required"))
+    
+    # Time index
+    origin_date <- d$date[1]
+    d$x <- as.numeric(difftime(d$date, origin_date, units = "days"))/30.4375
+    y <- d$bls_emts
+    
+    # Last observed values
+    last <- tail(d$date, 1)
+    current <- tail(y, 1)
+    
+    # Future dates
+    H <- input$horizon
+    h <- seq_len(H)
+    
+    future <- last %m+% months(h)
+    
+    # Future time index
+    future_x <- as.numeric(difftime(future, origin_date, units = "days")) / 30.4375
+    
+    # Future predictors
+    # Assume latest observed values remain unchanged
+    future_df <- data.frame(
+      x = future_x,
+      emt_students = rep(tail(d$emt_students, 1), H),
+      ops_pending = rep(tail(d$ops_pending, 1), H)
+    )
+    
+    # 1. MLR -----
+    mlr_mod <- lm(bls_emts ~ x + emt_students + ops_pending, data = d)
+    
+    mlr_pred <- predict(mlr_mod,newdata = future_df)
+    mlr_pred <- pmax(0, mlr_pred)
+    
+    # 2. Endpoint model -------------------------------
+    
+    endpoint_slope <- (tail(d$bls_emts, 1) - head(d$bls_emts, 1)) / (tail(d$x, 1) - head(d$x, 1))
+    ep_pred <- endpoint_pred(train_df = d,new_df = data.frame(date = future))
+    
+    # Select model ------------------------------------
+    
+    trend <- switch(
+      input$baseline,
+      linear = mlr_pred,
+      change = ep_pred
+    )
+    # Recruitment funnel --------------------------
+    
+    p1 <- min(1, rates["approval"]*input$application_mult / 100)
+    p2 <- min(1, rates["graduation"]*input$academy_mult / 100)
+    p3 <- min(1, rates["qualification"]*input$intern_mult / 100)
+    
+    annual_approved <- input$applications * p1
+    annual_entrants <- min(annual_approved, input$sessions*input$seats*input$seat_utilization / 100)
+    annual_graduates <- annual_entrants * p2
+    annual_aics <- annual_graduates * p3
+    
+    # Baseline funnel
+    base_entrants <- min(
+      ref$applications * rates["approval"],
+      input$sessions *
+        input$seats *
+        input$seat_utilization / 100
+    )
+    
+    base_aics <- base_entrants *
+      rates["graduation"] *
+      rates["qualification"]
+    
+    # Funnel scenario
+    annual_delta <- annual_aics - base_aics
+    
+    # Inferred exits
+    observed_new <- mean(d$new_bls, na.rm = TRUE)
+    
+    inferred_exits <- max(0,12*(observed_new - endpoint_slope))
+    
+    exits <- if (
+      is.na(input$annual_exits)
+    ) {
+      inferred_exits
+    } else {
+      input$annual_exits
+    }
+    
+    # Scenario forecast
+    lag <- input$pipeline_lag
+    
+    months_active <- pmax(0, h - lag)
+    
+    scenario <- pmax(
+      0,
+      trend + annual_delta / 12 * months_active
+    )
+    
+    validate(
+      need(
+        length(trend) == length(future),
+        paste(
+          "Trend forecast returned",
+          length(trend),
+          "predictions, but",
+          length(future),
+          "future dates were requested."
+        )
+      )
+    )
+    
+    
+    # Forecast output
+    f <- data.frame(
+      date = future,
+      status_quo = trend,
+      scenario = scenario
+    )
+    
+    list(
+      f = f,
+      slope = endpoint_slope,
+      current = current,
+      
+      annual_approved = annual_approved,
+      annual_entrants = annual_entrants,
+      annual_graduates = annual_graduates,
+      annual_aics = annual_aics,
+      
+      base_aics = base_aics,
+      annual_delta = annual_delta,
+      
+      exits = exits,
+      inferred_exits = inferred_exits,
+      
+      rates = c(p1, p2, p3),
+      lag = lag
+    )
   })
   eta<-function(v,dates,target){j<-which(v>=target);if(length(j))format(dates[j[1]],'%b %Y') else 'Not within horizon'}
   output$current<-renderText(round(model()$current))

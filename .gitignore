@@ -48,3 +48,10 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+<<<<<<< Updated upstream
+.Rproj.user
+.DS_Store
+.quarto
+=======
+>>>>>>> Stashed changes
+.positai
