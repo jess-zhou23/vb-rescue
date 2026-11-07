@@ -280,7 +280,7 @@ server <- function(input,output,session){
     z <- c("bls_emts", "date", "emt_students", "ops_pending","new_bls")
     d <- data() |>
       select(all_of(z)) |>
-      filter(!is.na(bls_emts), !is.na(date)) |>
+      filter(!is.na(bls_emts), !is.na(date), !is.na(emt_students), !is.na(ops_pending)) |>
       arrange(date)
     
     validate(need(nrow(d) >= 2,"At least two membership observations required"))
