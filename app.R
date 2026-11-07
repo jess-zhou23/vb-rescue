@@ -52,9 +52,11 @@ endpoint_pred <- function(train_df, new_df) {
   return(pred)
 }
 
+
 base <- read.csv('bls_2026.csv', stringsAsFactors=FALSE)
 base$date <- parse_dates(base$date)
 # These are annual cross-sectional ratios, not confirmed same-cohort probabilities.
+# The ref and rate is the 2025 data we got from the email. 
 ref <- list(applications=1229, approved=408, graduates=161, aics=101,
             academy_sessions=6, seats_per_session=60,
             lost_approved=47, lost_students_testing=105, lost_interns=45)
@@ -278,7 +280,7 @@ server <- function(input,output,session){
     z <- c("bls_emts", "date", "emt_students", "ops_pending","new_bls")
     d <- data() |>
       select(all_of(z)) |>
-      filter(!is.na(bls_emts), !is.na(date), !is.na(emt_students), !is.na(ops_pending)) |>
+      filter(!is.na(bls_emts), !is.na(date)) |>
       arrange(date)
     
     validate(need(nrow(d) >= 2,"At least two membership observations required"))
@@ -310,10 +312,12 @@ server <- function(input,output,session){
     )
     
     # 1. MLR -----
-    mlr_mod <- lm(bls_emts ~ x + emt_students + ops_pending, data = d)
+    mlr_mod <- lm(bls_emts ~ x + emt_students + ops_pending,data = d)
     
     mlr_pred <- predict(mlr_mod,newdata = future_df)
     mlr_pred <- pmax(0, mlr_pred)
+    
+    mlr_slope <- mlr_mod$coefficients["x"]
     
     # 2. Endpoint model -------------------------------
     
@@ -327,6 +331,13 @@ server <- function(input,output,session){
       linear = mlr_pred,
       change = ep_pred
     )
+    
+    trend_slope <- switch(
+      input$baseline,
+      linear = as.numeric(mlr_slope),
+      change = as.numeric(endpoint_slope)
+    )
+    
     # Recruitment funnel --------------------------
     
     p1 <- min(1, rates["approval"]*input$application_mult / 100)
@@ -338,17 +349,19 @@ server <- function(input,output,session){
     annual_graduates <- annual_entrants * p2
     annual_aics <- annual_graduates * p3
     
-    # Baseline funnel
+    # Baseline funnel: use the same capacity constraint
+    # and conversion-rate calculations as the scenario
+    
+    base_approved <- ref$applications * rates["approval"]
+    
     base_entrants <- min(
-      ref$applications * rates["approval"],
-      input$sessions *
-        input$seats *
-        input$seat_utilization / 100
+      base_approved,
+      ref$academy_sessions * ref$seats_per_session
     )
     
-    base_aics <- base_entrants *
-      rates["graduation"] *
-      rates["qualification"]
+    base_graduates <- base_entrants * rates["graduation"]
+    
+    base_aics <- base_graduates * rates["qualification"]
     
     # Funnel scenario
     annual_delta <- annual_aics - base_aics
@@ -376,6 +389,9 @@ server <- function(input,output,session){
       trend + annual_delta / 12 * months_active
     )
     
+    # Scenario slope after the pipeline delay
+    scenario_slope <- trend_slope + annual_delta / 12
+    
     validate(
       need(
         length(trend) == length(future),
@@ -399,17 +415,24 @@ server <- function(input,output,session){
     
     list(
       f = f,
-      slope = endpoint_slope,
+      
+      # Forecast slopes
+      slope = trend_slope,
+      scenario_slope = scenario_slope,
+      
       current = current,
       
+      # Recruitment funnel
       annual_approved = annual_approved,
       annual_entrants = annual_entrants,
       annual_graduates = annual_graduates,
       annual_aics = annual_aics,
       
+      # Baseline comparison
       base_aics = base_aics,
       annual_delta = annual_delta,
       
+      # Workforce assumptions
       exits = exits,
       inferred_exits = inferred_exits,
       
@@ -432,10 +455,10 @@ server <- function(input,output,session){
       labs(x=NULL,y='Active BLS AICs (proxy)',color=NULL)+theme_minimal(base_size=13)+theme(legend.position='bottom')
   })
   output$comparison<-renderTable({m<-model();data.frame(
-    Measure=c('Latest observed trend (AICs/month)','2025 baseline new AICs/year (capacity constrained)',
-              'Scenario new AICs/year','Additional AICs/year vs 2025 baseline',
-              'Inferred active BLS departures/year (context only)'),
-    Value=round(c(m$slope,m$base_aics,m$annual_aics,m$annual_delta,m$exits),1))},striped=TRUE)
+    Measure=c('Status quo predicted BLS providers/month','Scenario Predicted BLS Providers/month after pipeline delay',
+              'Historical 2025 AIC baseline (reported)','Scenario new AICs/year',
+              'Predicted Additional AICs from 2025','Inferred active BLS departures/year (context only)'),
+    Value=round(c(m$slope,m$scenario_slope,ref$aics,m$annual_aics,(m$annual_aics-ref$aics),m$exits),1))},striped=TRUE)
   output$funnel_table<-renderTable({m<-model();data.frame(
     Stage=c('Applications','Approved / progressed','Academy entrants (capacity capped)','Academy graduates','New AICs'),
     `2025 annual count`=c(1229,408,NA,161,101),
@@ -443,10 +466,42 @@ server <- function(input,output,session){
   output$math_summary <- renderUI({
     m <- model()
     
+    selected_model <- if (input$baseline == "linear") {
+      "Multiple Linear Regression"
+    } else {
+      "Endpoint Average Change"
+    }
+    
     div(
       class = 'scenario-details',
       
-      h4('1. Historical conversion rates'),
+      # 1. Forecast benchmark
+      h4('1. Selected forecasting model'),
+      
+      p(
+        strong('Benchmark method: '),
+        selected_model
+      ),
+      
+      p(
+        strong('Status quo predicted membership change: '),
+        round(m$slope, 2), ' BLS providers per month.'
+      ),
+      
+      p(
+        strong('Scenario predicted membership change: '),
+        round(m$scenario_slope, 2), ' BLS providers per month after the pipeline delay.'
+      ),
+      
+      p(
+        class = 'note',
+        'The status quo slope is determined by the selected forecasting model. ',
+        'The scenario slope additionally accounts for the change in annual AIC production.'
+      ),
+      
+      # 2. Historical conversion rates
+      h4('2. Historical conversion rates'),
+      
       p(
         strong('Approval: '), round(100 * rates['approval'], 1), '%',
         ' | ',
@@ -455,11 +510,14 @@ server <- function(input,output,session){
         strong('AIC qualification: '), round(100 * rates['qualification'], 1), '%'
       ),
       
-      h4('2. Scenario assumptions'),
+      # 3. Scenario assumptions
+      h4('3. Scenario assumptions'),
+      
       p(
         strong('Adjusted rates: '),
         paste(round(100 * m$rates, 1), collapse = '%, '), '%'
       ),
+      
       p(
         strong('Annual academy capacity: '),
         input$sessions, ' academies × ', input$seats,
@@ -468,33 +526,58 @@ server <- function(input,output,session){
         ' usable seats.'
       ),
       
-      h4('3. Annual projections'),
+      # 4. Annual recruitment projections
+      h4('4. Annual recruitment projections'),
+      
       p(
         strong('Projected new AICs: '),
         round(m$annual_aics, 1), ' per year.'
       ),
+      
       p(
-        strong('Change from the 2025 baseline: '),
+        strong('Modeled 2025 baseline: '),
+        round(m$base_aics, 1), ' AICs per year.'
+      ),
+      
+      p(
+        strong('Change from the modeled baseline: '),
         round(m$annual_delta, 1), ' AICs per year.'
       ),
       
-      h4('4. Membership forecast'),
+      # 5. Membership forecast
+      h4('5. Membership forecast'),
+      
       p(
-        'Projected membership = status quo trend forecast + annual scenario increment, ',
-        'starting after the ', m$lag, '-month pipeline delay.'
+        'Projected membership follows the selected status quo trend, ',
+        'with the annual recruitment adjustment beginning after the ',
+        m$lag, '-month pipeline delay.'
       ),
+      
       p(
-        strong('Implied active departures: '),
-        round(m$inferred_exits, 1), ' per year. ',
-        'User assumption: ', round(m$exits, 1), ' per year.'
+        strong('Inferred active departures: '),
+        round(m$inferred_exits, 1), ' per year.'
+      ),
+      
+      p(
+        strong('User-assumed departures: '),
+        round(m$exits, 1), ' per year.'
       ),
       
       p(
         class = 'note',
-        'Departure estimates are shown for context only and do not alter the calibrated forecast. Annual funnel rates are not cohort-verified, and graduation/AIC populations may not be strictly BLS-only.'
+        'Departure estimates are based on historical membership growth and ',
+        'new BLS AIC counts, not the selected forecasting model. They are ',
+        'shown for context only and do not alter the calibrated forecast. ',
+        'Annual funnel rates are not cohort-verified, and graduation/AIC ',
+        'populations may not be strictly BLS-only.'
       )
     )
   })
+  outputOptions(
+    output,
+    "math_summary",
+    suspendWhenHidden = FALSE
+  )
   # ---- Latest trends tab: these use data(), so they update when new months are uploaded ----
   # Only the latest year in the data, so year-to-date totals don't mix years
   trend_data <- reactive({
