@@ -159,7 +159,7 @@ ui <- fluidPage(
     h1('Virginia Beach Rescue Foundation | BLS Volunteer Planner',
        style = 'font-size: 30px; font-weight: 700; color: #17324d; margin: 0; line-height: 1.3;')
   ),
-  sidebarLayout(sidebarPanel(width=3,
+  sidebarLayout(sidebarPanel(width=4,
                              div(
                                class = "control-header",
                                h3("Control Panel"),
@@ -209,7 +209,7 @@ ui <- fluidPage(
                              downloadButton('export','Export projections')
                              )
                              ),
-                mainPanel(width=9,
+                mainPanel(width=8,
                           fluidRow(column(4,div(class='metric',strong('Latest Active BLS Providers'),h2(textOutput('current',inline=TRUE)))),
                                    column(4,div(class='metric',strong('Status Quo Trend Target Date'),h2(textOutput('trend_eta',inline=TRUE)))),
                                    column(4,div(class='metric',strong('Funnel Scenario Target Date'),h2(textOutput('scenario_eta',inline=TRUE))))),
@@ -564,7 +564,7 @@ server <- function(input,output,session){
       geom_line(data=f,aes(date,scenario,color='Funnel scenario'),linewidth=1.2)+
       geom_hline(yintercept=input$target,linetype='dotdash',color='red', linewidth = 1)+
       scale_color_manual(values=c('Observed BLS'='#176b79','Status quo trend'='red','Funnel scenario'='#d8892c'))+
-      labs(x=NULL,y='Active BLS AICs (proxy)',color=NULL)+theme_minimal(base_size=13)+theme(legend.position='bottom')
+      labs(x=NULL,y='Active BLS AICs',color=NULL)+theme_minimal(base_size=13)+theme(legend.position='bottom')
   })
 
   output$download_forecast <- downloadHandler(
