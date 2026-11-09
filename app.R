@@ -152,6 +152,41 @@ ui <- fluidPage(
         border-bottom: 1px solid #e2e8f0;
       }
     }
+    
+    
+.detail-section {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 22px 26px;
+  margin-bottom: 20px;
+}
+
+.detail-section h4 {
+  color: #17324d;
+  font-weight: 700;
+  margin-top: 0;
+  margin-bottom: 18px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detail-section strong {
+  color: #243b53;
+}
+
+.detail-section p {
+  line-height: 1.6;
+  margin-top: 6px;
+  margin-bottom: 16px;
+}
+
+.detail-section .note {
+  font-size: 13px;
+  color: #64748b;
+}
+
+    
   '))
     ),
   div(
@@ -159,7 +194,7 @@ ui <- fluidPage(
     h1('Virginia Beach Rescue Foundation | BLS Volunteer Planner',
        style = 'font-size: 30px; font-weight: 700; color: #17324d; margin: 0; line-height: 1.3;')
   ),
-  sidebarLayout(sidebarPanel(width=3,
+  sidebarLayout(sidebarPanel(width=4,
                              div(
                                class = "control-header",
                                h3("Control Panel"),
@@ -195,10 +230,10 @@ ui <- fluidPage(
                              numericInput('sessions','Academies per year',6,min=0,max=12,step=1),
                              numericInput('seats','Seats per academy',60,min=0,max=200,step=5),
                              numericInput('seat_utilization','Usable seat capacity (%)',100,min=0,max=100,step=5),
-                             tags$hr(),h4('Workforce & timing'),
-                             numericInput('annual_exits','Assumed active BLS departures per year',NA,min=0,step=1),
-                             p(class='note','Leave blank to infer departures from the latest new-BLS counts minus observed membership growth. This is not a measured attrition rate.'),
+                             tags$hr(), h4('Workforce & timing'),
                              numericInput('pipeline_lag','Pipeline delay to new AICs (months)',6,min=0,max=36),
+                             p(class='note',
+                               'Estimated time between implementing recruitment improvements and seeing their impact on active BLS membership. During this delay, membership follows the status quo forecast.'),
                              tags$hr(),h4('Update membership data'),
                              uiOutput('csv_upload_ui'),
                              uiOutput('csv_status_ui'),
@@ -207,7 +242,7 @@ ui <- fluidPage(
                              downloadButton('export','Export projections')
                              )
                              ),
-                mainPanel(width=9,
+                mainPanel(width=8,
                           fluidRow(column(4,div(class='metric',strong('Latest Active BLS Providers'),h2(textOutput('current',inline=TRUE)))),
                                    column(4,div(class='metric',strong('Status Quo Trend Target Date'),h2(textOutput('trend_eta',inline=TRUE)))),
                                    column(4,div(class='metric',strong('Funnel Scenario Target Date'),h2(textOutput('scenario_eta',inline=TRUE))))),
@@ -227,16 +262,113 @@ ui <- fluidPage(
                                      plotlyOutput('g_losses',height='300px'),
                                      tags$hr(),selectInput('stage','Explore a membership or pipeline measure',choices=setNames(names(labels),unname(labels)),selected='bls_emts'),plotlyOutput('stageplot',height='290px')),
                             tabPanel('Scenario Details',
-                                     h4('Reported pipeline losses'),
-                                     p('47 approved applicants, 105 academy students or testing candidates, and 45 interns were lost from the recruitment pipeline. These are NOT active BLS workforce exits, and are not subtracted from membership. They may overlap with the funnel ratios.'),
                                      
-                                     h4('Scenario calculation'),
-                                     uiOutput('math_summary'),
+                                     h3('Understanding Your Scenario'),
+                                     p('Use the control panel on the left to explore how recruitment, training capacity, and timing assumptions may affect future BLS membership. The Forecast tab displays the resulting projections.'),
                                      
-                                     p(class='note','Annual counts are ratios of annual totals, not verified same-cohort conversion probabilities. Academy seat capacity is an upper bound, not a target. Application and graduation totals may contain non-BLS candidates; verify with the client before interpreting this as a BLS-only pipeline.'),
+                                     # SECTION 1: FORECAST SETTINGS
+                                     div(class = 'detail-section',
+                                         h4('1. Forecast Settings'),
+                                         
+                                         strong('BLS provider target'),
+                                         p('Sets the desired number of active BLS providers. The target appears as a horizontal line on the forecast graph and is used to calculate the estimated target dates.'),
+                                         
+                                         strong('Forecast horizon'),
+                                         p('Determines how many months into the future the dashboard projects membership. A longer horizon extends the forecast but does not change the underlying monthly growth assumptions.'),
+                                         
+                                         strong('Trend benchmark method'),
+                                         p('Selects how the status quo membership forecast is calculated. This forecast serves as the starting point for evaluating recruitment improvements.'),
+                                         
+                                         tags$ul(
+                                           tags$li(strong('Linear regression: '),
+                                                   'Uses historical membership, time, EMT academy students, and pending operations candidates to estimate future membership. Future student and operations counts are held at their latest observed values.'),
+                                           tags$li(strong('Endpoint average change: '),
+                                                   'Calculates the average monthly membership change between the first and most recent observations, then extends that trend into the future.')
+                                         )
+                                     ),
                                      
-                                     h4('Source data'),
-                                     DTOutput('source')
+                                     # SECTION 2: RECRUITMENT FUNNEL
+                                     div(class = 'detail-section',
+                                         h4('2. Recruitment Funnel Improvements'),
+                                         
+                                         p('These three sliders explore improvements at different stages of the recruitment process. Each is measured relative to the corresponding 2025 baseline rate.'),
+                                         
+                                         p(strong('How to interpret the sliders: '),
+                                           '100% maintains the historical rate, 150% represents a 50% increase in that rate, and 50% represents a 50% decrease. Rates cannot exceed 100%.'),
+                                         
+                                         strong('Application approval / progression'),
+                                         p('Adjusts the proportion of applicants who are approved or progress toward academy enrollment. Increasing this slider allows more applicants to enter the recruitment pipeline, subject to available academy capacity.'),
+                                         
+                                         strong('Academy graduation'),
+                                         p('Adjusts the proportion of modeled academy entrants who successfully graduate. Increasing this slider represents improvements in student retention, training support, or graduation outcomes.'),
+                                         
+                                         strong('Graduate-to-AIC yield'),
+                                         p('Adjusts the proportion of graduates who ultimately become qualified AICs. Increasing this slider represents improvements in the transition from graduation through the remaining qualification process.'),
+                                         
+                                         p(class = 'note',
+                                           'These adjustments are hypothetical scenarios, not guaranteed outcomes. The historical rates are based on annual totals rather than verified individual recruitment cohorts.')
+                                     ),
+                                     
+                                     # SECTION 3: RECRUITMENT CAPACITY
+                                     div(class = 'detail-section',
+                                         h4('3. Recruitment Volume & Academy Capacity'),
+                                         
+                                         strong('Applications per year'),
+                                         p(
+                                           'Sets the assumed number of applications received annually. ',
+                                           strong('Additional applications may not increase AIC production if academy capacity is already full.')
+                                         ),
+                                         
+                                         strong('Academies per year'),
+                                         p('Sets the number of academy sessions offered annually. More sessions increase the potential number of recruits who can begin training.'),
+                                         
+                                         strong('Seats per academy'),
+                                         p('Sets the maximum number of students each academy can accommodate. Together with the number of sessions, this determines total annual academy capacity.'),
+                                         
+                                         strong('Usable seat capacity'),
+                                         p('Specifies the percentage of academy seats expected to be filled and usable. Lower utilization reduces the number of recruits who can enter training.'),
+                                         
+                                         p(class = 'note',
+                                           'The model limits annual academy entrants to the smaller of approved applicants and usable academy capacity. Increasing capacity will only improve outcomes when sufficient applicants are available.')
+                                     ),
+                                     
+                                     # SECTION 4: WORKFORCE & TIMING
+                                     div(class = 'detail-section',
+                                         h4('4. Workforce & Timing Assumptions'),
+                                         
+                                         strong('Pipeline delay to new AICs'),
+                                         p('Represents the assumed number of months between implementing recruitment improvements and seeing their effects on active BLS membership.'),
+                                         
+                                         p('During this delay, the scenario follows the status quo forecast. Afterward, the difference between scenario and baseline annual AIC production is gradually incorporated into projected membership.'),
+                                         
+                                         strong('How the scenario forecast works'),
+                                         p('The dashboard first estimates future membership using the selected benchmark method. It then calculates the change in annual AIC production under the recruitment and capacity assumptions. This difference is converted into a monthly adjustment and applied after the pipeline delay.'),
+                                         
+                                         p(class = 'note',
+                                           'The scenario is a planning projection, not a statistical prediction interval. It assumes the selected recruitment conditions remain constant over the forecast horizon.')
+                                     ),
+                                     
+                                     # SECTION 5: DATA & LIMITATIONS
+                                     div(class = 'detail-section',
+                                         h4('5. Data & Interpretation'),
+                                         
+                                         p('The recruitment funnel is calibrated using reported 2025 annual totals. These totals may include people from different application cohorts, and some academy and graduation counts may include non-BLS candidates.'),
+                                         
+                                         p('Reported pipeline losses include withdrawals before academy, during training or testing, and during internship. These are different from departures of already active BLS providers and are not separately subtracted from the membership forecast.'),
+                                         
+                                         p('Use the projections to compare possible strategies rather than as guaranteed future staffing levels.')
+                                     )
+                            ),
+                            tabPanel('Source Data',
+                                     
+                                     h3('Historical Membership & Recruitment Data'),
+                                     
+                                     p('Explore the historical data used to generate membership forecasts and recruitment trends. Uploaded monthly updates are automatically reflected in this table.'),
+                                     
+                                     div(
+                                       class = 'detail-section',
+                                       DTOutput('source')
+                                     )
                             )
                           )
                 ))
@@ -475,19 +607,6 @@ server <- function(input,output,session){
     # Funnel scenario
     annual_delta <- annual_aics - base_aics
     
-    # Inferred exits
-    observed_new <- mean(d$new_bls, na.rm = TRUE)
-    
-    inferred_exits <- max(0,12*(observed_new - endpoint_slope))
-    
-    exits <- if (
-      is.na(input$annual_exits)
-    ) {
-      inferred_exits
-    } else {
-      input$annual_exits
-    }
-    
     # Scenario forecast
     lag <- input$pipeline_lag
     
@@ -541,10 +660,6 @@ server <- function(input,output,session){
       base_aics = base_aics,
       annual_delta = annual_delta,
       
-      # Workforce assumptions
-      exits = exits,
-      inferred_exits = inferred_exits,
-      
       rates = c(p1, p2, p3),
       lag = lag
     )
@@ -562,7 +677,7 @@ server <- function(input,output,session){
       geom_line(data=f,aes(date,scenario,color='Funnel scenario'),linewidth=1.2)+
       geom_hline(yintercept=input$target,linetype='dotdash',color='red', linewidth = 1)+
       scale_color_manual(values=c('Observed BLS'='#176b79','Status quo trend'='red','Funnel scenario'='#d8892c'))+
-      labs(x=NULL,y='Active BLS AICs (proxy)',color=NULL)+theme_minimal(base_size=13)+theme(legend.position='bottom')
+      labs(x=NULL,y='Active BLS AICs',color=NULL)+theme_minimal(base_size=13)+theme(legend.position='bottom')
   })
 
   output$download_forecast <- downloadHandler(
@@ -602,16 +717,14 @@ server <- function(input,output,session){
         'Scenario predicted BLS providers/month after pipeline delay',
         'Historical 2025 AIC baseline (reported)',
         'Scenario new AICs/year',
-        'Predicted Additional AICs from 2025',
-        'Inferred active BLS departures/year (context only)'
+        'Predicted Additional AICs from 2025'
       ),
       Value = round(c(
         m$slope,
         m$scenario_slope,
         ref$aics,
         m$annual_aics,
-        (m$annual_aics-ref$aics), # delta
-        m$exits
+        (m$annual_aics-ref$aics) # delta
       ), 1)
     )
   }, striped = TRUE, width = '100%', align = 'c')
@@ -657,7 +770,7 @@ server <- function(input,output,session){
       ),
       
       # 2. Historical conversion rates
-      h4('2. Historical conversion rates'),
+      h4('2. Historical conversion rates (from 2025 baseline)'),
       
       p(
         strong('Approval: '), round(100 * rates['approval'], 1), '%',
