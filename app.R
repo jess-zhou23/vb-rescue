@@ -167,7 +167,7 @@ ui <- fluidPage(
                              div(
                                class = "control-scroll",
                              numericInput('target','BLS provider target',320,min=1),
-                             sliderInput('horizon','Forecast horizon (months)',12,120,24,step=12),
+                             sliderInput('horizon','Forecast horizon (months)',12,120,30,step=6), # start, stop, default, step
                              selectInput('baseline','Trend benchmark method',c('Linear regression'='linear','Endpoint average change'='change')),
                              tags$hr(),strong('Recruitment Funnel Scenario'),
                              p(class='note','Sliders adjust the 2025 annual ratios. 100% means no improvement from baseline.'),
