@@ -317,7 +317,10 @@ server <- function(input,output,session){
     mlr_pred <- predict(mlr_mod,newdata = future_df)
     mlr_pred <- pmax(0, mlr_pred)
     
-    mlr_slope <- mlr_mod$coefficients["x"]
+    slope_pred <- predict(mlr_mod, d)
+    n <- length(slope_pred)
+    
+    mlr_slope <- (slope_pred[n]-slope_pred[1])/n
     
     # 2. Endpoint model -------------------------------
     
