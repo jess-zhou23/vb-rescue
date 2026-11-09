@@ -357,16 +357,19 @@ ui <- fluidPage(
                                          p('Reported pipeline losses include withdrawals before academy, during training or testing, and during internship. These are different from departures of already active BLS providers and are not separately subtracted from the membership forecast.'),
                                          
                                          p('Use the projections to compare possible strategies rather than as guaranteed future staffing levels.')
-                                     ),
+                                     )
+                            ),
+                            tabPanel('Source Data',
                                      
-                                     # SOURCE DATA
-                                     div(class = 'detail-section',
-                                         h4('Source Data'),
-                                         p('Explore the historical membership and recruitment data used by the dashboard. Uploaded monthly updates are reflected in this table.'),
-                                         DTOutput('source')
+                                     h3('Historical Membership & Recruitment Data'),
+                                     
+                                     p('Explore the historical data used to generate membership forecasts and recruitment trends. Uploaded monthly updates are automatically reflected in this table.'),
+                                     
+                                     div(
+                                       class = 'detail-section',
+                                       DTOutput('source')
                                      )
                             )
-                            
                           )
                 ))
 )
