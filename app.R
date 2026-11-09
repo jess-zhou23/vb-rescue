@@ -17,41 +17,6 @@ parse_dates <- function(x){
   out[!is.na(out) & out < as.Date('2000-01-01')] <- NA
   out
 }
-
-endpoint_pred <- function(train_df, new_df) {
-  
-  x_train <- as.numeric(
-    difftime(
-      train_df$date,
-      train_df$date[1],
-      units = "days"
-    )
-  ) / 30.4375
-  
-  y_train <- train_df$bls_emts
-  
-  slope <- (
-    tail(y_train, 1) - head(y_train, 1)
-  ) / (
-    tail(x_train, 1) - head(x_train, 1)
-  )
-  
-  if (!is.finite(slope)) {
-    stop("Cannot estimate trend from training dates")
-  }
-  
-  last_date <- tail(train_df$date, 1)
-  current <- tail(y_train, 1)
-  
-  elapsed <- as.numeric(
-    difftime(new_df$date, last_date, units = "days")
-  ) / 30.4375
-  
-  pred <- pmax(0, current + slope * elapsed)
-  
-  return(pred)
-}
-
 base <- read.csv('bls_2026.csv', stringsAsFactors=FALSE)
 base$date <- parse_dates(base$date)
 # These are annual cross-sectional ratios, not confirmed same-cohort probabilities.
@@ -66,35 +31,122 @@ labels <- c(pending_academy='Pending academy enrollment', awaiting_academy='Awai
             graduates='EMT graduates (all)', ops_completions='Operations completions (all)',
             new_bls='New BLS AICs')
 ui <- fluidPage(
-  tags$head(tags$style(HTML('body{background:#f6f8fb;color:#1e293b}.well{background:white;border:1px solid #e2e8f0}.metric{background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:15px}.note{color:#64748b;font-size:13px}.tab-content{padding-top:18px}@media (min-width:768px){.col-sm-3 > .well{max-height:calc(100vh - 100px);overflow-y:auto}}'))),
+  tags$head(
+      tags$style(HTML('
+    body {
+      background: #f6f8fb;
+      color: #1e293b;
+    }
+
+    .well {
+      background: white;
+      border: 1px solid #e2e8f0;
+    }
+
+    .metric {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 15px;
+    }
+
+    .note {
+      color: #64748b;
+      font-size: 13px;
+    }
+
+    .tab-content {
+      padding-top: 18px;
+    }
+#comparison {
+  width: 100%;
+}
+
+#comparison table {
+  width: 100% !important;
+  table-layout: fixed;
+}
+
+#comparison th,
+#comparison td {
+  text-align: center;
+  padding: 10px;
+}
+
+#comparison th:first-child,
+#comparison td:first-child {
+  width: 75%;
+}
+
+#comparison th:last-child,
+#comparison td:last-child {
+  width: 25%;
+}
+
+    @media (min-width: 768px) {
+      .col-sm-3 > .well {
+        height: calc(100vh - 20px);
+        max-height: calc(100vh - 20px);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .control-header {
+        flex: 0 0 auto;
+        background: white;
+        padding: 10px 0 15px;
+        border-bottom: 1px solid #e2e8f0;
+      }
+
+      .control-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+    }
+  '))
+    ),
   div(
     style = 'text-align: center; padding: 24px 12px 20px; margin-bottom: 12px;',
     h1('Virginia Beach Rescue Foundation | BLS Volunteer Planner',
        style = 'font-size: 30px; font-weight: 700; color: #17324d; margin: 0; line-height: 1.3;')
   ),
   sidebarLayout(sidebarPanel(width=3,
+                             div(
+                               class = "control-header",
+                               h3("Control Panel"),
+                               actionButton(
+                                 "reset_scenario",
+                                 "Reset entire scenario",
+                                 class = "btn-warning"
+                               )
+                             ),
+                             div(
+                               class = "control-scroll",
                              numericInput('target','BLS provider target',320,min=1),
-                             sliderInput('horizon','Forecast horizon (months)',12,120,60,step=12),
+                             sliderInput('horizon','Forecast horizon (months)',12,60,24,step=12),
                              selectInput('baseline','Trend benchmark method',c('Linear regression'='linear','Endpoint average change'='change')),
-                             tags$hr(),h4('Recruitment funnel scenario'),
+                             tags$hr(),strong('Recruitment Funnel Scenario'),
                              p(class='note','Sliders adjust the 2025 annual ratios. 100% means no improvement from baseline.'),
                              fluidRow(
-                               column(10, sliderInput('application_mult','Application approval/progression (% of baseline)',50,200,100,step=5,post='%')),
+                               column(10, sliderInput('application_mult','Application approval/progression (% of 2025 baseline)',50,200,100,step=5,post='%')),
                                column(2, actionButton('reset_application', '↻', class = 'btn-sm'))
                              ),
                              fluidRow(
-                               column(10, sliderInput('academy_mult','Academy graduation (% of baseline)',50,200,100,step=5,post='%')),
+                               column(10, sliderInput('academy_mult','Academy graduation (% of 2025 baseline)',50,200,100,step=5,post='%')),
                                column(2, actionButton('reset_academy', '↻', class = 'btn-sm'))
                              ),
                              fluidRow(
-                               column(10, sliderInput('intern_mult','Graduate-to-AIC yield (% of baseline)',50,200,100,step=5,post='%')),
+                               column(10, sliderInput('intern_mult','Graduate-to-AIC yield (% of 2025 baseline)',50,200,100,step=5,post='%')),
                                column(2, actionButton('reset_intern', '↻', class = 'btn-sm'))
                              ),
                              numericInput('applications','Applications per year',1229,min=0,step=25),
                              numericInput('sessions','Academies per year',6,min=0,max=12,step=1),
                              numericInput('seats','Seats per academy',60,min=0,max=200,step=5),
                              numericInput('seat_utilization','Usable seat capacity (%)',100,min=0,max=100,step=5),
-                             actionButton('reset_scenario','Reset entire scenario'),
                              tags$hr(),h4('Workforce & timing'),
                              numericInput('annual_exits','Assumed active BLS departures per year',NA,min=0,step=1),
                              p(class='note','Leave blank to infer departures from the latest new-BLS counts minus observed membership growth. This is not a measured attrition rate.'),
@@ -103,13 +155,20 @@ ui <- fluidPage(
                              uiOutput('csv_upload_ui'),
                              uiOutput('csv_status_ui'),
                              uiOutput('remove_csv_ui'),
-                             downloadButton('template','CSV template'),downloadButton('export','Export projections')),
+                             downloadButton('template','CSV template'),
+                             downloadButton('export','Export projections')
+                             )
+                             ),
                 mainPanel(width=9,
                           fluidRow(column(4,div(class='metric',strong('Latest Active BLS Providers'),h2(textOutput('current',inline=TRUE)))),
                                    column(4,div(class='metric',strong('Status Quo Trend Target Date'),h2(textOutput('trend_eta',inline=TRUE)))),
                                    column(4,div(class='metric',strong('Funnel Scenario Target Date'),h2(textOutput('scenario_eta',inline=TRUE))))),
                           tabsetPanel(
-                            tabPanel('Forecast',plotOutput('forecast',height='410px'),tableOutput('comparison'),p(class='note','Funnel forecasts are scenario calculations, not statistical prediction intervals. The 2025 ratios may mix recruitment cohorts.')),
+                            tabPanel('Forecast',
+                                     plotOutput('forecast',height='410px'),
+                                     downloadButton('download_forecast','Download forecast graph'),
+                                     tableOutput('comparison'),
+                                     p(class='note','Funnel forecasts are scenario calculations, not statistical prediction intervals. The 2025 ratios may mix recruitment cohorts.')),
                             tabPanel('Latest trends',
                                      plotlyOutput('g_goal',height='330px'),
                                      plotlyOutput('g_snapshot',height='300px'),
@@ -177,7 +236,7 @@ server <- function(input,output,session){
     upload <- input[[paste0('upload_', upload_version())]]
     req(upload)
     
-    required_cols <- c('date', 'bls_emts', 'new_bls', 'emt_students', 'ops_pending')
+    required_cols <- c('date', 'bls_emts', 'new_bls')
     u <- tryCatch(
       read.csv(upload$datapath, stringsAsFactors = FALSE),
       error = function(e) NULL
@@ -187,7 +246,7 @@ server <- function(input,output,session){
         is.null(u) || !all(required_cols %in% names(u))) {
       uploaded_data(NULL)
       showNotification(
-        'Invalid CSV. Required columns: date, bls_emts, new_bls, emt_students, ops_pending.',
+        'Invalid CSV. Required columns: date, bls_emts, new_bls.',
         type = 'error', duration = 8
       )
       return()
@@ -274,148 +333,43 @@ server <- function(input,output,session){
   })
   
   model <- reactive({
-    # Historical data
-    z <- c("bls_emts", "date", "emt_students", "ops_pending","new_bls")
-    d <- data() |>
-      select(all_of(z)) |>
-      filter(!is.na(bls_emts), !is.na(date), !is.na(emt_students), !is.na(ops_pending)) |>
-      arrange(date)
-    
-    validate(need(nrow(d) >= 2,"At least two membership observations required"))
-    
-    # Time index
-    origin_date <- d$date[1]
-    d$x <- as.numeric(difftime(d$date, origin_date, units = "days"))/30.4375
-    y <- d$bls_emts
-    
-    # Last observed values
-    last <- tail(d$date, 1)
-    current <- tail(y, 1)
-    
-    # Future dates
-    H <- input$horizon
-    h <- seq_len(H)
-    
-    future <- last %m+% months(h)
-    
-    # Future time index
-    future_x <- as.numeric(difftime(future, origin_date, units = "days")) / 30.4375
-    
-    # Future predictors
-    # Assume latest observed values remain unchanged
-    future_df <- data.frame(
-      x = future_x,
-      emt_students = rep(tail(d$emt_students, 1), H),
-      ops_pending = rep(tail(d$ops_pending, 1), H)
-    )
-    
-    # 1. MLR -----
-    mlr_mod <- lm(bls_emts ~ x + emt_students + ops_pending, data = d)
-    
-    mlr_pred <- predict(mlr_mod,newdata = future_df)
-    mlr_pred <- pmax(0, mlr_pred)
-    
-    # 2. Endpoint model -------------------------------
-    
-    endpoint_slope <- (tail(d$bls_emts, 1) - head(d$bls_emts, 1)) / (tail(d$x, 1) - head(d$x, 1))
-    ep_pred <- endpoint_pred(train_df = d,new_df = data.frame(date = future))
-    
-    # Select model ------------------------------------
-    
-    trend <- switch(
-      input$baseline,
-      linear = mlr_pred,
-      change = ep_pred
-    )
-    # Recruitment funnel --------------------------
-    
-    p1 <- min(1, rates["approval"]*input$application_mult / 100)
-    p2 <- min(1, rates["graduation"]*input$academy_mult / 100)
-    p3 <- min(1, rates["qualification"]*input$intern_mult / 100)
-    
-    annual_approved <- input$applications * p1
-    annual_entrants <- min(annual_approved, input$sessions*input$seats*input$seat_utilization / 100)
-    annual_graduates <- annual_entrants * p2
-    annual_aics <- annual_graduates * p3
-    
-    # Baseline funnel
-    base_entrants <- min(
-      ref$applications * rates["approval"],
-      input$sessions *
-        input$seats *
-        input$seat_utilization / 100
-    )
-    
-    base_aics <- base_entrants *
-      rates["graduation"] *
-      rates["qualification"]
-    
-    # Funnel scenario
-    annual_delta <- annual_aics - base_aics
-    
-    # Inferred exits
-    observed_new <- mean(d$new_bls, na.rm = TRUE)
-    
-    inferred_exits <- max(0,12*(observed_new - endpoint_slope))
-    
-    exits <- if (
-      is.na(input$annual_exits)
-    ) {
-      inferred_exits
-    } else {
-      input$annual_exits
-    }
-    
-    # Scenario forecast
-    lag <- input$pipeline_lag
-    
-    months_active <- pmax(0, h - lag)
-    
-    scenario <- pmax(
-      0,
-      trend + annual_delta / 12 * months_active
-    )
-    
-    validate(
-      need(
-        length(trend) == length(future),
-        paste(
-          "Trend forecast returned",
-          length(trend),
-          "predictions, but",
-          length(future),
-          "future dates were requested."
-        )
-      )
-    )
-    
-    
-    # Forecast output
-    f <- data.frame(
-      date = future,
-      status_quo = trend,
-      scenario = scenario
-    )
-    
-    list(
-      f = f,
-      slope = endpoint_slope,
-      current = current,
-      
-      annual_approved = annual_approved,
-      annual_entrants = annual_entrants,
-      annual_graduates = annual_graduates,
-      annual_aics = annual_aics,
-      
-      base_aics = base_aics,
-      annual_delta = annual_delta,
-      
-      exits = exits,
-      inferred_exits = inferred_exits,
-      
-      rates = c(p1, p2, p3),
-      lag = lag
-    )
+    d<-data()|>filter(!is.na(bls_emts))|>arrange(date)
+    validate(need(nrow(d)>=2,'At least two membership observations required'))
+    x<-as.numeric(difftime(d$date,d$date[1],units='days'))/30.4375
+    y<-d$bls_emts
+    slope<-if(input$baseline=='linear') unname(coef(lm(y~x))[2]) else (tail(y,1)-head(y,1))/(tail(x,1)-head(x,1))
+    validate(need(is.finite(slope),'Cannot estimate trend from these dates'))
+    last<-tail(d$date,1); current<-tail(y,1); H<-input$horizon; h<-seq_len(H)
+    future<-last %m+% months(h)
+    elapsed<-as.numeric(difftime(future,last,units='days'))/30.4375
+    trend<-pmax(0,current+slope*elapsed)
+    # Funnel: annual observed ratios; caps are applied to entering academy, not graduates.
+    p1<-min(1,rates['approval']*input$application_mult/100)
+    p2<-min(1,rates['graduation']*input$academy_mult/100)
+    p3<-min(1,rates['qualification']*input$intern_mult/100)
+    annual_approved<-input$applications*p1
+    annual_entrants<-min(annual_approved,input$sessions*input$seats*input$seat_utilization/100)
+    annual_graduates<-annual_entrants*p2
+    annual_aics<-annual_graduates*p3
+    # A capacity-constrained baseline at unchanged 2025 ratios and the SAME operational capacity.
+    base_entrants<-min(ref$applications*rates['approval'],input$sessions*input$seats*input$seat_utilization/100)
+    base_aics<-base_entrants*rates['graduation']*rates['qualification']
+    # When no BLS departure count is supplied, infer from the latest new BLS inflow and net growth.
+    observed_new<-mean(d$new_bls,na.rm=TRUE)
+    inferred_exits<-max(0,12*(observed_new-slope))
+    exits<-if(is.na(input$annual_exits)) inferred_exits else input$annual_exits
+    # Calibrate the no-change funnel to observed net growth, preserving the status quo.
+    # Scenario changes are the DIFFERENCE between new and baseline annual AIC throughput.
+    # This avoids an unsupported claim that 2025 gross flows reproduce the latest net growth.
+    annual_delta<-annual_aics-base_aics
+    lag<-input$pipeline_lag
+    months_active<-pmax(0,h-lag)
+    scenario<-pmax(0,trend+annual_delta/12*months_active)
+    f<-data.frame(date=future,status_quo=trend,scenario=scenario)
+    list(f=f,slope=slope,current=current,annual_approved=annual_approved,annual_entrants=annual_entrants,
+         annual_graduates=annual_graduates,annual_aics=annual_aics,base_aics=base_aics,
+         annual_delta=annual_delta,exits=exits,inferred_exits=inferred_exits,
+         rates=c(p1,p2,p3),lag=lag)
   })
   eta<-function(v,dates,target){j<-which(v>=target);if(length(j))format(dates[j[1]],'%b %Y') else 'Not within horizon'}
   output$current<-renderText(round(model()$current))
@@ -431,11 +385,54 @@ server <- function(input,output,session){
       scale_color_manual(values=c('Observed BLS'='#176b79','Status quo trend'='#64748b','Funnel scenario'='#d8892c'))+
       labs(x=NULL,y='Active BLS AICs (proxy)',color=NULL)+theme_minimal(base_size=13)+theme(legend.position='bottom')
   })
-  output$comparison<-renderTable({m<-model();data.frame(
-    Measure=c('Latest observed trend (AICs/month)','2025 baseline new AICs/year (capacity constrained)',
-              'Scenario new AICs/year','Additional AICs/year vs 2025 baseline',
-              'Inferred active BLS departures/year (context only)'),
-    Value=round(c(m$slope,m$base_aics,m$annual_aics,m$annual_delta,m$exits),1))},striped=TRUE)
+  output$download_forecast <- downloadHandler(
+    filename = function() {
+      'BLS_forecast_graph.png'
+    },
+    content = function(file) {
+      m <- model()
+      d <- data()
+      f <- m$f
+      
+      p <- ggplot() +
+        geom_line(data=d, aes(date, bls_emts, color='Observed BLS'), linewidth=1.2) +
+        geom_point(data=d, aes(date, bls_emts, color='Observed BLS'), size=2) +
+        geom_line(data=f, aes(date, status_quo, color='Status quo trend'), linetype=2, linewidth=1) +
+        geom_line(data=f, aes(date, scenario, color='Funnel scenario'), linewidth=1.2) +
+        geom_hline(yintercept=input$target,
+                   linetype='dashed', color='red', linewidth=1) +
+        scale_color_manual(values=c(
+          'Observed BLS'='#176b79',
+          'Status quo trend'='#64748b',
+          'Funnel scenario'='#d8892c'
+        )) +
+        labs(x=NULL, y='Active BLS AICs (proxy)', color=NULL) +
+        theme_minimal(base_size=13) +
+        theme(legend.position='bottom')
+      
+      ggsave(file, plot=p, width=12, height=7, dpi=300)
+    }
+  )
+  output$comparison <- renderTable({
+    m <- model()
+    
+    data.frame(
+      Measure = c(
+        'Latest observed trend (AICs/month)',
+        '2025 baseline new AICs/year (capacity constrained)',
+        'Scenario new AICs/year',
+        'Additional AICs/year vs 2025 baseline',
+        'Inferred active BLS departures/year (context only)'
+      ),
+      Value = round(c(
+        m$slope,
+        m$base_aics,
+        m$annual_aics,
+        m$annual_delta,
+        m$exits
+      ), 1)
+    )
+  }, striped = TRUE, width = '100%', align = 'c')
   output$funnel_table<-renderTable({m<-model();data.frame(
     Stage=c('Applications','Approved / progressed','Academy entrants (capacity capped)','Academy graduates','New AICs'),
     `2025 annual count`=c(1229,408,NA,161,101),
