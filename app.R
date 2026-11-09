@@ -199,6 +199,8 @@ ui <- fluidPage(
                              numericInput('annual_exits','Assumed active BLS departures per year',NA,min=0,step=1),
                              p(class='note','Leave blank to infer departures from the latest new-BLS counts minus observed membership growth. This is not a measured attrition rate.'),
                              numericInput('pipeline_lag','Pipeline delay to new AICs (months)',6,min=0,max=36),
+                             p(class='note',
+                               'Estimated time between implementing recruitment improvements and seeing their impact on active BLS membership. During this delay, membership follows the status quo forecast.'),
                              tags$hr(),h4('Update membership data'),
                              uiOutput('csv_upload_ui'),
                              uiOutput('csv_status_ui'),
