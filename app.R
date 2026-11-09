@@ -428,6 +428,15 @@ server <- function(input,output,session){
     
     mlr_slope <- (slope_pred[n]-slope_pred[1])/n
     
+    # for anchored MLR
+    #mlr_slope <- as.numeric(coef(mlr_mod)["x"])
+    
+    #mlr_pred <- current + mlr_slope * (
+   #   future_x - tail(d$x, 1)
+    #)
+    
+   # mlr_pred <- pmax(0, mlr_pred)
+    
     # 2. Endpoint model -------------------------------
     
     endpoint_slope <- (tail(d$bls_emts, 1) - head(d$bls_emts, 1)) / (tail(d$x, 1) - head(d$x, 1))
@@ -612,7 +621,7 @@ server <- function(input,output,session){
         m$annual_aics,
         (m$annual_aics-ref$aics), # delta
         m$exits
-      ), 1)
+      ), 2)
     )
   }, striped = TRUE, width = '100%', align = 'c')
 
