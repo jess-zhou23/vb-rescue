@@ -52,7 +52,6 @@ endpoint_pred <- function(train_df, new_df) {
   return(pred)
 }
 
-
 base <- read.csv('bls_2026.csv', stringsAsFactors=FALSE)
 base$date <- parse_dates(base$date)
 # These are annual cross-sectional ratios, not confirmed same-cohort probabilities.
@@ -68,35 +67,134 @@ labels <- c(pending_academy='Pending academy enrollment', awaiting_academy='Awai
             graduates='EMT graduates (all)', ops_completions='Operations completions (all)',
             new_bls='New BLS AICs')
 ui <- fluidPage(
-  tags$head(tags$style(HTML('body{background:#f6f8fb;color:#1e293b}.well{background:white;border:1px solid #e2e8f0}.metric{background:white;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:15px}.note{color:#64748b;font-size:13px}.tab-content{padding-top:18px}@media (min-width:768px){.col-sm-3 > .well{max-height:calc(100vh - 100px);overflow-y:auto}}'))),
+  tags$head(
+      tags$style(HTML('
+    body {
+      background: #f6f8fb;
+      color: #1e293b;
+    }
+
+    .well {
+      background: white;
+      border: 1px solid #e2e8f0;
+    }
+
+    .metric {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 15px;
+    }
+
+    .note {
+      color: #64748b;
+      font-size: 13px;
+    }
+
+    .tab-content {
+      padding-top: 18px;
+    }
+#comparison {
+  width: 100%;
+}
+
+#comparison table {
+  width: 100% !important;
+  table-layout: fixed;
+}
+
+#comparison th,
+#comparison td {
+  text-align: center;
+  padding: 10px;
+}
+
+#comparison th:first-child,
+#comparison td:first-child {
+  width: 75%;
+}
+
+#comparison th:last-child,
+#comparison td:last-child {
+  width: 25%;
+}
+
+    @media (min-width: 768px) {
+      .col-sm-3 > .well {
+        height: calc(100vh - 20px);
+        max-height: calc(100vh - 20px);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .control-header {
+        flex: 0 0 auto;
+        background: white;
+        padding: 10px 0 15px;
+        border-bottom: 1px solid #e2e8f0;
+      }
+
+      .control-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+      
+      .sticky-reset {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: white;
+        padding: 10px 0;
+        border-bottom: 1px solid #e2e8f0;
+      }
+    }
+  '))
+    ),
   div(
     style = 'text-align: center; padding: 24px 12px 20px; margin-bottom: 12px;',
     h1('Virginia Beach Rescue Foundation | BLS Volunteer Planner',
        style = 'font-size: 30px; font-weight: 700; color: #17324d; margin: 0; line-height: 1.3;')
   ),
   sidebarLayout(sidebarPanel(width=3,
+                             div(
+                               class = "control-header",
+                               h3("Control Panel"),
+                             ),
+                             div(
+                               class = "control-scroll",
                              numericInput('target','BLS provider target',320,min=1),
-                             sliderInput('horizon','Forecast horizon (months)',12,120,60,step=12),
+                             sliderInput('horizon','Forecast horizon (months)',12,120,30,step=6), # start, stop, default, step
                              selectInput('baseline','Trend benchmark method',c('Linear regression'='linear','Endpoint average change'='change')),
-                             tags$hr(),h4('Recruitment funnel scenario'),
+                             tags$hr(),strong('Recruitment Funnel Scenario'),
                              p(class='note','Sliders adjust the 2025 annual ratios. 100% means no improvement from baseline.'),
+                             div(
+                               class = "sticky-reset",
+                               actionButton(
+                                 "reset_scenario",
+                                 "Reset entire scenario",
+                                 class = "btn-warning"
+                               )
+                             ),
                              fluidRow(
-                               column(10, sliderInput('application_mult','Application approval/progression (% of baseline)',50,200,100,step=5,post='%')),
+                               column(10, sliderInput('application_mult','Application approval/progression (% of 2025 baseline)',50,200,100,step=5,post='%')),
                                column(2, actionButton('reset_application', '↻', class = 'btn-sm'))
                              ),
                              fluidRow(
-                               column(10, sliderInput('academy_mult','Academy graduation (% of baseline)',50,200,100,step=5,post='%')),
+                               column(10, sliderInput('academy_mult','Academy graduation (% of 2025 baseline)',50,200,100,step=5,post='%')),
                                column(2, actionButton('reset_academy', '↻', class = 'btn-sm'))
                              ),
                              fluidRow(
-                               column(10, sliderInput('intern_mult','Graduate-to-AIC yield (% of baseline)',50,200,100,step=5,post='%')),
+                               column(10, sliderInput('intern_mult','Graduate-to-AIC yield (% of 2025 baseline)',50,200,100,step=5,post='%')),
                                column(2, actionButton('reset_intern', '↻', class = 'btn-sm'))
                              ),
                              numericInput('applications','Applications per year',1229,min=0,step=25),
                              numericInput('sessions','Academies per year',6,min=0,max=12,step=1),
                              numericInput('seats','Seats per academy',60,min=0,max=200,step=5),
                              numericInput('seat_utilization','Usable seat capacity (%)',100,min=0,max=100,step=5),
-                             actionButton('reset_scenario','Reset entire scenario'),
                              tags$hr(),h4('Workforce & timing'),
                              numericInput('annual_exits','Assumed active BLS departures per year',NA,min=0,step=1),
                              p(class='note','Leave blank to infer departures from the latest new-BLS counts minus observed membership growth. This is not a measured attrition rate.'),
@@ -105,13 +203,20 @@ ui <- fluidPage(
                              uiOutput('csv_upload_ui'),
                              uiOutput('csv_status_ui'),
                              uiOutput('remove_csv_ui'),
-                             downloadButton('template','CSV template'),downloadButton('export','Export projections')),
+                             downloadButton('template','CSV template'),
+                             downloadButton('export','Export projections')
+                             )
+                             ),
                 mainPanel(width=9,
                           fluidRow(column(4,div(class='metric',strong('Latest Active BLS Providers'),h2(textOutput('current',inline=TRUE)))),
                                    column(4,div(class='metric',strong('Status Quo Trend Target Date'),h2(textOutput('trend_eta',inline=TRUE)))),
                                    column(4,div(class='metric',strong('Funnel Scenario Target Date'),h2(textOutput('scenario_eta',inline=TRUE))))),
                           tabsetPanel(
-                            tabPanel('Forecast',plotOutput('forecast',height='410px'),tableOutput('comparison'),p(class='note','Funnel forecasts are scenario calculations, not statistical prediction intervals. The 2025 ratios may mix recruitment cohorts.')),
+                            tabPanel('Forecast',
+                                     plotOutput('forecast',height='410px'),
+                                     downloadButton('download_forecast','Download forecast graph'),
+                                     tableOutput('comparison'),
+                                     p(class='note','Funnel forecasts are scenario calculations, not statistical prediction intervals. The 2025 ratios may mix recruitment cohorts.')),
                             tabPanel('Latest trends',
                                      plotlyOutput('g_goal',height='330px'),
                                      plotlyOutput('g_snapshot',height='300px'),
@@ -276,6 +381,7 @@ server <- function(input,output,session){
   })
   
   model <- reactive({
+
     # Historical data
     z <- c("bls_emts", "date", "emt_students", "ops_pending","new_bls")
     d <- data() |>
@@ -442,6 +548,7 @@ server <- function(input,output,session){
       rates = c(p1, p2, p3),
       lag = lag
     )
+
   })
   eta<-function(v,dates,target){j<-which(v>=target);if(length(j))format(dates[j[1]],'%b %Y') else 'Not within horizon'}
   output$current<-renderText(round(model()$current))
@@ -453,15 +560,62 @@ server <- function(input,output,session){
       geom_point(data=d,aes(date,bls_emts,color='Observed BLS'),size=2)+
       geom_line(data=f,aes(date,status_quo,color='Status quo trend'),linetype=2,linewidth=1)+
       geom_line(data=f,aes(date,scenario,color='Funnel scenario'),linewidth=1.2)+
-      geom_hline(yintercept=input$target,linetype='dotdash',color='#6b7280')+
-      scale_color_manual(values=c('Observed BLS'='#176b79','Status quo trend'='#64748b','Funnel scenario'='#d8892c'))+
+      geom_hline(yintercept=input$target,linetype='dotdash',color='red', linewidth = 1)+
+      scale_color_manual(values=c('Observed BLS'='#176b79','Status quo trend'='red','Funnel scenario'='#d8892c'))+
       labs(x=NULL,y='Active BLS AICs (proxy)',color=NULL)+theme_minimal(base_size=13)+theme(legend.position='bottom')
   })
-  output$comparison<-renderTable({m<-model();data.frame(
-    Measure=c('Status quo predicted BLS providers/month','Scenario Predicted BLS Providers/month after pipeline delay',
-              'Historical 2025 AIC baseline (reported)','Scenario new AICs/year',
-              'Predicted Additional AICs from 2025','Inferred active BLS departures/year (context only)'),
-    Value=round(c(m$slope,m$scenario_slope,ref$aics,m$annual_aics,(m$annual_aics-ref$aics),m$exits),1))},striped=TRUE)
+
+  output$download_forecast <- downloadHandler(
+    filename = function() {
+      'BLS_forecast_graph.png'
+    },
+    content = function(file) {
+      m <- model()
+      d <- data()
+      f <- m$f
+      
+      p <- ggplot() +
+        geom_line(data=d, aes(date, bls_emts, color='Observed BLS'), linewidth=1.2) +
+        geom_point(data=d, aes(date, bls_emts, color='Observed BLS'), size=2) +
+        geom_line(data=f, aes(date, status_quo, color='Status quo trend'), linetype=2, linewidth=1) +
+        geom_line(data=f, aes(date, scenario, color='Funnel scenario'), linewidth=1.2) +
+        geom_hline(yintercept=input$target,
+                   linetype='dashed', color='red', linewidth=1) +
+        scale_color_manual(values=c(
+          'Observed BLS'='#176b79',
+          'Status quo trend'='#64748b',
+          'Funnel scenario'='#d8892c'
+        )) +
+        labs(x=NULL, y='Active BLS AICs (proxy)', color=NULL) +
+        theme_minimal(base_size=13) +
+        theme(legend.position='bottom')
+      
+      ggsave(file, plot=p, width=12, height=7, dpi=300)
+    }
+  )
+  output$comparison <- renderTable({
+    m <- model()
+    
+    data.frame(
+      Measure = c(
+        'Status quo predicted BLS providers/month',
+        'Scenario predicted BLS providers/month after pipeline delay',
+        'Historical 2025 AIC baseline (reported)',
+        'Scenario new AICs/year',
+        'Predicted Additional AICs from 2025',
+        'Inferred active BLS departures/year (context only)'
+      ),
+      Value = round(c(
+        m$slope,
+        m$scenario_slope,
+        ref$aics,
+        m$annual_aics,
+        (m$annual_aics-ref$aics), # delta
+        m$exits
+      ), 1)
+    )
+  }, striped = TRUE, width = '100%', align = 'c')
+
   output$funnel_table<-renderTable({m<-model();data.frame(
     Stage=c('Applications','Approved / progressed','Academy entrants (capacity capped)','Academy graduates','New AICs'),
     `2025 annual count`=c(1229,408,NA,161,101),
