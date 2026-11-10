@@ -423,19 +423,8 @@ server <- function(input,output,session){
     mlr_pred <- predict(mlr_mod,newdata = future_df)
     mlr_pred <- pmax(0, mlr_pred)
     
-    slope_pred <- predict(mlr_mod, d)
-    n <- length(slope_pred)
+    mlr_slope <- as.numeric(coef(mlr_mod)["x"])
     
-    mlr_slope <- (slope_pred[n]-slope_pred[1])/n
-    
-    # for anchored MLR
-    #mlr_slope <- as.numeric(coef(mlr_mod)["x"])
-    
-    #mlr_pred <- current + mlr_slope * (
-   #   future_x - tail(d$x, 1)
-    #)
-    
-   # mlr_pred <- pmax(0, mlr_pred)
     
     # 2. Endpoint model -------------------------------
     
@@ -523,6 +512,16 @@ server <- function(input,output,session){
       )
     )
     
+    # Predict End of Year BLS number
+    year_end <- as.Date(paste0(
+      lubridate::year(Sys.Date()), "-12-31"
+    ))
+    
+    year_end_index <- min(abs(as.numeric(future - year_end)))
+    
+    year_end_trend <- trend[year_end_index]
+    year_end_scenario <- scenario[year_end_index]
+    
     
     # Forecast output
     f <- data.frame(
@@ -545,6 +544,9 @@ server <- function(input,output,session){
       annual_entrants = annual_entrants,
       annual_graduates = annual_graduates,
       annual_aics = annual_aics,
+      
+      year_end_trend = year_end_trend,
+      year_end_scenario = year_end_scenario,
       
       # Baseline comparison
       base_aics = base_aics,
@@ -609,6 +611,8 @@ server <- function(input,output,session){
       Measure = c(
         'Status quo predicted BLS providers/month',
         'Scenario predicted BLS providers/month after pipeline delay',
+        'Predicted BLS providers at the end of the year (Status Quo)',
+        'Predicted BLS providers at the end of the year (Scenario)',
         'Historical 2025 AIC baseline (reported)',
         'Scenario new AICs/year',
         'Predicted Additional AICs from 2025',
@@ -617,6 +621,8 @@ server <- function(input,output,session){
       Value = round(c(
         m$slope,
         m$scenario_slope,
+        m$year_end_trend,
+        m$year_end_scenario,
         ref$aics,
         m$annual_aics,
         (m$annual_aics-ref$aics), # delta
