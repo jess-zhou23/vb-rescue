@@ -940,7 +940,7 @@ server <- function(input,output,session){
       geom_text(aes(y = value + max(value, na.rm = TRUE) * 0.05, label = value), size = 3.5) +
       scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
       labs(x = NULL, y = 'People')
-    hover(p, paste('Where members are in', format(r$date, '%B')))
+    hover(p, paste('Where members are in', format(r$date, '%B %Y')))
   })
   
   # 3. Pipeline (year to date)
