@@ -135,37 +135,50 @@ ui <- fluidPage(
 }
 
     @media (min-width: 768px) {
-      .col-sm-3 > .well {
-        height: calc(100vh - 20px);
-        max-height: calc(100vh - 20px);
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-      }
 
-      .control-header {
-        flex: 0 0 auto;
-        background: white;
-        padding: 10px 0 15px;
-        border-bottom: 1px solid #e2e8f0;
-      }
+  /* Fixed-height sidebar */
+  .col-sm-4 > .well {
+    height: calc(100vh - 20px);
+    max-height: calc(100vh - 20px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
 
-      .control-scroll {
-        flex: 1 1 auto;
-        min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-      }
-      
-      .sticky-reset {
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        background: white;
-        padding: 10px 0;
-        border-bottom: 1px solid #e2e8f0;
-      }
-    }
+  /* Header stays visible */
+  .control-header {
+    flex: 0 0 auto;
+    background: white;
+    padding: 10px 0 15px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  /* Independently scrollable controls */
+  .control-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 10px;
+  }
+
+  /* Reset button sticks after reaching the top */
+  .sticky-reset {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: white;
+    padding: 10px 0;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  
+  .col-sm-4 {
+  position: sticky;
+  top: 10px;
+  align-self: flex-start;
+}
+
+}
     
     
 .detail-section {
