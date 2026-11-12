@@ -275,7 +275,7 @@ ui <- fluidPage(
                                    column(4,div(class='metric',strong('Funnel Scenario Target Date'),h2(textOutput('scenario_eta',inline=TRUE))))),
                           tabsetPanel(
                             tabPanel('Forecast',
-                                     plotOutput('forecast',height='410px'),
+                                     plotlyOutput('forecast',height='410px'),
                                      downloadButton('download_forecast','Download forecast graph'),
                                      tableOutput('comparison'),
                                      p(class='note','Funnel forecasts are scenario calculations, not statistical prediction intervals. The 2025 ratios may mix recruitment cohorts.')),
@@ -701,15 +701,47 @@ server <- function(input,output,session){
   output$current<-renderText(round(model()$current))
   output$trend_eta<-renderText({m<-model();if(m$current>=input$target)'Already reached' else eta(m$f$status_quo,m$f$date,input$target)})
   output$scenario_eta<-renderText({m<-model();if(m$current>=input$target)'Already reached' else eta(m$f$scenario,m$f$date,input$target)})
-  output$forecast<-renderPlot({
+  # Turns a ggplot into an interactive chart: bold title, and the number shows when you hover
+  hover <- function(p, title) {
+    ggplotly(p + theme_minimal(base_size = 13), tooltip = 'text') %>%
+      layout(title = list(text = paste0('<b>', title, '</b>'), x = 0.01, font = list(size = 20)),
+             margin = list(t = 60),
+             legend = list(orientation = 'h', x = 0.35, y = -0.12)) %>%
+      config(
+        displayModeBar = TRUE,
+        displaylogo = FALSE,
+        modeBarButtons = list(
+          list("zoomIn2d", "zoomOut2d", "autoScale2d", "resetScale2d", "toImage")
+        ),
+        toImageButtonOptions = list(
+          format = "png",
+          filename = "VB_Rescue_Graph",
+          width = 1200,
+          height = 700,
+          scale = 2
+        )
+      )
+  }
+  output$forecast<-renderPlotly({
     m<-model();d<-data();f<-m$f
-    ggplot()+geom_line(data=d,aes(date,bls_emts,color='Observed BLS'),linewidth=1.2)+
-      geom_point(data=d,aes(date,bls_emts,color='Observed BLS'),size=2)+
-      geom_line(data=f,aes(date,status_quo,color='Status quo trend'),linetype=2,linewidth=1)+
-      geom_line(data=f,aes(date,scenario,color='Funnel scenario'),linewidth=1.2)+
-      geom_hline(yintercept=input$target,linetype='dotdash',color='firebrick', linewidth = 1)+
-      scale_color_manual(values=c('Observed BLS'='#176b79','Status quo trend'='firebrick','Funnel scenario'='#d8892c'))+
-      labs(x=NULL,y='Active BLS AICs',color=NULL)+theme_minimal(base_size=13)+theme(legend.position='bottom')
+
+    d$tip <- paste0(format(d$date, '%b %Y'), ': ', round(d$bls_emts))
+    f$tip_sq <- paste0(format(f$date, '%b %Y'), ': ', round(f$status_quo), ' (Status quo)')
+    f$tip_sc <- paste0(format(f$date, '%b %Y'), ': ', round(f$scenario), ' (Scenario)')
+    
+    p <- ggplot() +
+      geom_line(data=d, aes(date, bls_emts, color='Observed BLS', text=tip, group=1), linewidth=0.9) +
+      geom_point(data=d, aes(date, bls_emts, color='Observed BLS', text=tip, group=1), size=2) +
+      geom_line(data=f, aes(date, status_quo, color='Status quo trend', text=tip_sq, group=1), linetype=2, linewidth=0.7) +
+      geom_line(data=f, aes(date, scenario, color='Funnel scenario', text=tip_sc, group=1), linewidth=0.9) +
+      geom_hline(yintercept=input$target, linetype='dotdash', color='firebrick', linewidth = 1) +
+      annotate('text', x = min(d$date, na.rm=TRUE), y = input$target + 2, label = paste('Goal:', input$target), colour = 'firebrick', hjust = 0) +
+      scale_color_manual(values=c('Observed BLS'='#176b79', 'Status quo trend'='#64748b', 'Funnel scenario'='#d8892c')) +
+      labs(x=NULL, y='Active BLS AICs', color=NULL) +
+      theme_minimal(base_size=13) +
+      theme(legend.position='bottom')
+    
+    hover(p, 'Forecast vs. Scenario')
   })
 
   output$download_forecast <- downloadHandler(
@@ -728,6 +760,7 @@ server <- function(input,output,session){
         geom_line(data=f, aes(date, scenario, color='Funnel scenario'), linewidth=1.2) +
         geom_hline(yintercept=input$target,
                    linetype='dashed', color='firebrick', linewidth=1) +
+        annotate('text', x = min(d$date, na.rm=TRUE) + 30, y = input$target + 5, label = paste('Goal:', input$target), colour = 'firebrick', hjust = 0) +
         scale_color_manual(values=c(
           'Observed BLS'='#176b79',
           'Status quo trend'='#64748b',
@@ -736,8 +769,6 @@ server <- function(input,output,session){
         labs(x=NULL, y='Active BLS AICs (proxy)', color=NULL) +
         theme_minimal(base_size=13) +
         theme(legend.position='bottom')
-      
-      ggsave(file, plot=p, width=12, height=7, dpi=300)
     }
   )
   output$comparison <- renderTable({
@@ -902,27 +933,6 @@ server <- function(input,output,session){
   
   months_axis <- scale_x_date(date_breaks = '1 month', date_labels = '%b %y')
   
-  # Turns a ggplot into an interactive chart: bold title, and the number shows when you hover
-  hover <- function(p, title) {
-    ggplotly(p + theme_minimal(base_size = 13), tooltip = 'text') %>%
-      layout(title = list(text = paste0('<b>', title, '</b>'), x = 0.01, font = list(size = 20)),
-             margin = list(t = 60),
-             legend = list(orientation = 'h', x = 0.35, y = -0.12)) %>%
-      config(
-        displayModeBar = TRUE,
-        displaylogo = FALSE,
-        modeBarButtons = list(
-          list("zoomIn2d", "zoomOut2d", "autoScale2d", "resetScale2d", "toImage")
-        ),
-        toImageButtonOptions = list(
-          format = "png",
-          filename = "VB_Rescue_Graph",
-          width = 1200,
-          height = 700,
-          scale = 2
-        )
-      )
-  }
   
   # 1. EMTs vs goal
   output$g_goal <- renderPlotly({
