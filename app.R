@@ -730,10 +730,10 @@ server <- function(input,output,session){
     f$tip_sc <- paste0(format(f$date, '%b %Y'), ': ', round(f$scenario), ' (Scenario)')
     
     p <- ggplot() +
-      geom_line(data=d, aes(date, bls_emts, color='Observed BLS', text=tip, group=1), linewidth=1.2) +
+      geom_line(data=d, aes(date, bls_emts, color='Observed BLS', text=tip, group=1), linewidth=0.9) +
       geom_point(data=d, aes(date, bls_emts, color='Observed BLS', text=tip, group=1), size=2) +
-      geom_line(data=f, aes(date, status_quo, color='Status quo trend', text=tip_sq, group=1), linetype=2, linewidth=1) +
-      geom_line(data=f, aes(date, scenario, color='Funnel scenario', text=tip_sc, group=1), linewidth=1.2) +
+      geom_line(data=f, aes(date, status_quo, color='Status quo trend', text=tip_sq, group=1), linetype=2, linewidth=0.7) +
+      geom_line(data=f, aes(date, scenario, color='Funnel scenario', text=tip_sc, group=1), linewidth=0.9) +
       geom_hline(yintercept=input$target, linetype='dotdash', color='firebrick', linewidth = 1) +
       annotate('text', x = min(d$date, na.rm=TRUE), y = input$target + 2, label = paste('Goal:', input$target), colour = 'firebrick', hjust = 0) +
       scale_color_manual(values=c('Observed BLS'='#176b79', 'Status quo trend'='#64748b', 'Funnel scenario'='#d8892c')) +
@@ -760,7 +760,7 @@ server <- function(input,output,session){
         geom_line(data=f, aes(date, scenario, color='Funnel scenario'), linewidth=1.2) +
         geom_hline(yintercept=input$target,
                    linetype='dashed', color='firebrick', linewidth=1) +
-        annotate('text', x = min(d$date, na.rm=TRUE), y = input$target + 2, label = paste('Goal:', input$target), colour = 'firebrick', hjust = 0) +
+        annotate('text', x = min(d$date, na.rm=TRUE) + 30, y = input$target + 5, label = paste('Goal:', input$target), colour = 'firebrick', hjust = 0) +
         scale_color_manual(values=c(
           'Observed BLS'='#176b79',
           'Status quo trend'='#64748b',
