@@ -376,6 +376,8 @@ ui <- fluidPage(
                                          strong('How the scenario forecast works'),
                                          p('The dashboard first estimates future membership using the selected benchmark method. It then calculates the change in annual AIC production under the recruitment and capacity assumptions. This difference is converted into a monthly adjustment and applied after the pipeline delay.'),
                                          
+                                         p('The scenario funnel assumes that every newly recruited AIC becomes an active BLS EMT and remained active, so the change in the control pane variables solely reflects changes for the active BLS EMTs.'),
+                                         
                                          p(class = 'note',
                                            'The scenario is a planning projection, not a statistical prediction interval. It assumes the selected recruitment conditions remain constant over the forecast horizon.')
                                      ),
@@ -387,6 +389,8 @@ ui <- fluidPage(
                                          p('The recruitment funnel is calibrated using reported 2025 annual totals. These totals may include people from different application cohorts, and some academy and graduation counts may include non-BLS candidates.'),
                                          
                                          p('Reported pipeline losses include withdrawals before academy, during training or testing, and during internship. These are different from departures of already active BLS providers and are not separately subtracted from the membership forecast.'),
+                                         
+                                         p('The Linear Regression model uses the Ordinary Least Squares (OLS) method to estimate the overall trend in historical BLS membership. Unlike the Endpoint Change model, its fitted regression line does not necessarily pass through the latest observed BLS membership count. As a result, the two models may have different starting points for their forecasts. Therefore, even if Linear Regression projects a lower average monthly increase than the Endpoint Change model, it may still predict an earlier target achievement date due to the difference in starting points.'),
                                          
                                          p('Use the projections to compare possible strategies rather than as guaranteed future staffing levels.')
                                      )
@@ -587,10 +591,8 @@ server <- function(input,output,session){
     mlr_pred <- predict(mlr_mod,newdata = future_df)
     mlr_pred <- pmax(0, mlr_pred)
     
-    slope_pred <- predict(mlr_mod, d)
-    n <- length(slope_pred)
+    mlr_slope <- as.numeric(coef(mlr_mod)["x"])
     
-    mlr_slope <- (slope_pred[n]-slope_pred[1])/n
     
     # 2. Endpoint model -------------------------------
     
@@ -665,6 +667,16 @@ server <- function(input,output,session){
       )
     )
     
+    # Predict End of Year BLS number
+    year_end <- as.Date(paste0(
+      lubridate::year(Sys.Date()), "-12-31"
+    ))
+    
+    year_end_index <- min(abs(as.numeric(future - year_end)))
+    
+    year_end_trend <- trend[year_end_index]
+    year_end_scenario <- scenario[year_end_index]
+    
     
     # Forecast output
     f <- data.frame(
@@ -687,6 +699,9 @@ server <- function(input,output,session){
       annual_entrants = annual_entrants,
       annual_graduates = annual_graduates,
       annual_aics = annual_aics,
+      
+      year_end_trend = year_end_trend,
+      year_end_scenario = year_end_scenario,
       
       # Baseline comparison
       base_aics = base_aics,
@@ -778,6 +793,8 @@ server <- function(input,output,session){
       Measure = c(
         'Status quo predicted BLS providers/month',
         'Scenario predicted BLS providers/month after pipeline delay',
+        'Predicted BLS providers at the end of the year (Status Quo)',
+        'Predicted BLS providers at the end of the year (Scenario)',
         'Historical 2025 AIC baseline (reported)',
         'Scenario new AICs/year',
         'Predicted Additional AICs from 2025'
@@ -785,10 +802,13 @@ server <- function(input,output,session){
       Value = round(c(
         m$slope,
         m$scenario_slope,
+        m$year_end_trend,
+        m$year_end_scenario,
         ref$aics,
         m$annual_aics,
-        (m$annual_aics-ref$aics) # delta
-      ), 1)
+        (m$annual_aics-ref$aics), # delta
+        m$exits
+      ), 2)
     )
   }, striped = TRUE, width = '100%', align = 'c')
 
