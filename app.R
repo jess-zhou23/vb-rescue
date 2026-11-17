@@ -270,7 +270,13 @@ ui <- fluidPage(
                              )
                              ),
                 mainPanel(width=8,
-                          fluidRow(column(4,div(class='metric',strong('Latest Active BLS Providers'),h2(textOutput('current',inline=TRUE)))),
+                          fluidRow(column(4,div(class='metric',
+                                                strong('Latest Active BLS Providers'),
+                                                h2(textOutput('current', inline=TRUE),
+                                                   tags$span(
+                                                     style='font-size: 13px; color: #64748b; font-weight: normal; margin-left: 8px;',
+                                                     textOutput('current_date', inline=TRUE)
+                                                )))),
                                    column(4,div(class='metric',strong('Status Quo Trend Target Date'),h2(textOutput('trend_eta',inline=TRUE)))),
                                    column(4,div(class='metric',strong('Funnel Scenario Target Date'),h2(textOutput('scenario_eta',inline=TRUE))))),
                           tabsetPanel(
@@ -714,6 +720,13 @@ server <- function(input,output,session){
   })
   eta<-function(v,dates,target){j<-which(v>=target);if(length(j))format(dates[j[1]],'%b %Y') else 'Not within horizon'}
   output$current<-renderText(round(model()$current))
+  output$current_date <- renderText({
+    d <- data() %>%
+      filter(!is.na(bls_emts)) %>%
+      arrange(date)
+    
+    paste("As of", format(max(d$date), "%B %Y"))
+  })
   output$trend_eta<-renderText({m<-model();if(m$current>=input$target)'Already reached' else eta(m$f$status_quo,m$f$date,input$target)})
   output$scenario_eta<-renderText({m<-model();if(m$current>=input$target)'Already reached' else eta(m$f$scenario,m$f$date,input$target)})
   # Turns a ggplot into an interactive chart: bold title, and the number shows when you hover
