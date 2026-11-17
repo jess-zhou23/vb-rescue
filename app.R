@@ -732,9 +732,19 @@ server <- function(input,output,session){
   # Turns a ggplot into an interactive chart: bold title, and the number shows when you hover
   hover <- function(p, title) {
     ggplotly(p + theme_minimal(base_size = 13), tooltip = 'text') %>%
-      layout(title = list(text = paste0('<b>', title, '</b>'), x = 0.01, font = list(size = 20)),
+      layout(title = list(
+        text = paste0('<b>', title, '</b>'),
+        x = 0.5,
+        xanchor = 'center',
+        font = list(size = 20)
+      ),
              margin = list(t = 60),
-             legend = list(orientation = 'h', x = 0.35, y = -0.12)) %>%
+             legend = list(
+               orientation = 'h',
+               x = 0.5,
+               xanchor = 'center',
+               y = -0.12
+             )) %>%
       config(
         displayModeBar = TRUE,
         displaylogo = FALSE,
