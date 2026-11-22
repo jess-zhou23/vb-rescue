@@ -594,10 +594,12 @@ server <- function(input,output,session){
     # 1. MLR -----
     mlr_mod <- lm(bls_emts ~ x + emt_students + ops_pending,data = d)
     
-    mlr_pred <- predict(mlr_mod,newdata = future_df)
-    mlr_pred <- pmax(0, mlr_pred)
-    
     mlr_slope <- as.numeric(coef(mlr_mod)["x"])
+    
+    # for anchored MLR
+
+    mlr_pred <- current + mlr_slope * (future_x - tail(d$x, 1))
+    mlr_pred <- pmax(0, mlr_pred)
     
     
     # 2. Endpoint model -------------------------------
@@ -818,8 +820,8 @@ server <- function(input,output,session){
         'Scenario predicted BLS providers/month after pipeline delay',
         'Predicted BLS providers at the end of the year (Status Quo)',
         'Predicted BLS providers at the end of the year (Scenario)',
-        'Historical 2025 AIC baseline (reported)',
         'Scenario new AICs/year',
+        'Historical 2025 AIC baseline (reported)',
         'Predicted Additional AICs from 2025'
       ),
       Value = round(c(
@@ -827,8 +829,8 @@ server <- function(input,output,session){
         m$scenario_slope,
         m$year_end_trend,
         m$year_end_scenario,
-        ref$aics,
         m$annual_aics,
+        ref$aics,
         (m$annual_aics-ref$aics), # delta
         m$exits
       ), 2)
