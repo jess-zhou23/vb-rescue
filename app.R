@@ -57,10 +57,10 @@ base <- read.csv('bls_2026.csv', stringsAsFactors=FALSE)
 base$date <- parse_dates(base$date)
 # These are annual cross-sectional ratios, not confirmed same-cohort probabilities.
 # The ref and rate is the 2025 data we got from the email. 
-ref <- list(applications=1229, approved=408, graduates=161, aics=101,
+ref <- list(applications=1229, approved=408, entrants=266, graduates=161, aics=101,
             academy_sessions=6, seats_per_session=60,
             lost_approved=47, lost_students_testing=105, lost_interns=45)
-rates <- c(approval=408/1229, graduation=161/408, qualification=101/161)
+rates <- c(approval=408/1229, enrollment=266/408, graduation=161/266, qualification=101/161)
 labels <- c(pending_academy='Pending academy enrollment', awaiting_academy='Awaiting EMT academy',
             pending_bls_intern='Pending BLS internship', emt_students='EMT academy students',
             testing='Students in testing', ops_pending='Pending operations track',
@@ -367,7 +367,7 @@ ui <- fluidPage(
                                          p('Specifies the percentage of academy seats expected to be filled and usable. Lower utilization reduces the number of recruits who can enter training.'),
                                          
                                          p(class = 'note',
-                                           'The model limits annual academy entrants to the smaller of approved applicants and usable academy capacity. Increasing capacity will only improve outcomes when sufficient applicants are available.')
+                                           'The model limits annual academy entrants to the smaller of enrolled approved applicants and usable academy capacity. Increasing capacity will only improve outcomes when sufficient applicants are available.')
                                      ),
                                      
                                      # SECTION 4: WORKFORCE & TIMING
@@ -626,7 +626,7 @@ server <- function(input,output,session){
     p3 <- min(1, rates["qualification"]*input$intern_mult / 100)
     
     annual_approved <- input$applications * p1
-    annual_entrants <- min(annual_approved, input$sessions*input$seats*input$seat_utilization / 100)
+    annual_entrants <- min(annual_approved*rates["enrollment"], input$sessions*input$seats*input$seat_utilization / 100)
     annual_graduates <- annual_entrants * p2
     annual_aics <- annual_graduates * p3
     
@@ -636,7 +636,7 @@ server <- function(input,output,session){
     base_approved <- ref$applications * rates["approval"]
     
     base_entrants <- min(
-      base_approved,
+      base_approved*rates["enrollment"],
       ref$academy_sessions * ref$seats_per_session
     )
     
@@ -837,7 +837,7 @@ server <- function(input,output,session){
 
   output$funnel_table<-renderTable({m<-model();data.frame(
     Stage=c('Applications','Approved / progressed','Academy entrants (capacity capped)','Academy graduates','New AICs'),
-    `2025 annual count`=c(1229,408,NA,161,101),
+    `2025 annual count`= c(1229,408,266,161,101),
     `Scenario annual count`=round(c(input$applications,m$annual_approved,m$annual_entrants,m$annual_graduates,m$annual_aics),1),check.names=FALSE)},striped=TRUE)
   output$math_summary <- renderUI({
     m <- model()
