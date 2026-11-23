@@ -820,9 +820,9 @@ server <- function(input,output,session){
         'Scenario predicted BLS providers/month after pipeline delay',
         'Predicted BLS providers at the end of the year (Status Quo)',
         'Predicted BLS providers at the end of the year (Scenario)',
-        'Scenario new AICs/year',
-        'Historical 2025 AIC baseline (reported)',
-        'Predicted Additional AICs from 2025'
+        'Scenario predicted new BLS AICs/year',
+        'Reported 2025 new BLS AICs (baseline)',
+        'Predicted Additional BLS AICs from 2025'
       ),
       Value = round(c(
         m$slope,
@@ -831,8 +831,7 @@ server <- function(input,output,session){
         m$year_end_scenario,
         m$annual_aics,
         ref$aics,
-        (m$annual_aics-ref$aics), # delta
-        m$exits
+        (m$annual_aics-ref$aics) # delta
       ), 2)
     )
   }, striped = TRUE, width = '100%', align = 'c')
